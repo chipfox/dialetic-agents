@@ -9,6 +9,7 @@ model: gemini-3-pro-preview
 - Cost: 1x multiplier (same as Sonnet)
 
 **Tier Alternatives**:
+
 - **Tier 2 (Budget)**: `claude-haiku-4.5` (0.33x cost) — fast & cheap, test on your codebase first
 - **Tier 3 (Premium)**: `claude-sonnet-4.5` (1x cost) — more stable/proven performance, same cost
 

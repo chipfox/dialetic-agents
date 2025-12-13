@@ -9,6 +9,7 @@ model: claude-sonnet-4.5
 - Cost: 1x multiplier (balanced vs. Haiku or Opus)
 
 **Tier Alternatives**:
+
 - **Tier 2 (Budget)**: `gemini-3-pro-preview` (1x cost) — comparable reasoning, potentially faster
 - **Tier 3 (Premium)**: `claude-opus-4.5` (3x cost) — absolute best reasoning for mission-critical systems
 

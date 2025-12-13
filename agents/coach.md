@@ -9,6 +9,7 @@ model: claude-sonnet-4.5
 - Cost: 1x multiplier (same as Architect, ensures parity)
 
 **Tier Alternatives**:
+
 - **Tier 2 (Budget)**: `gemini-3-pro-preview` (1x cost) — comparable reasoning, keep Sonnet preferred for credibility
 - **Tier 3 (Premium)**: `claude-opus-4.5` (3x cost, Preview) — maximum credibility for complex/mission-critical reviews
 
