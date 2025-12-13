@@ -58,6 +58,11 @@ You must output your work in this exact JSON format (wrapped in a code block):
 }
 ```
 
+### Strict Output Guardrails
+
+- Return exactly one fenced JSON block, nothing else. No prose, headings, or commentary before or after.
+- If you cannot complete the task, still emit valid JSON with an "error" note in `thought_process` and empty `files`/`commands_to_run`.
+
 ## Instructions
 
 1. Read the feedback carefully.

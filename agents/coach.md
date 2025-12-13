@@ -54,4 +54,9 @@ You must output your review in this exact JSON format (wrapped in a code block):
 }
 ```
 
+### Strict Output Guardrails
+
+- Return exactly one fenced JSON block, nothing else. No prose, headings, or commentary before or after.
+- If you cannot complete the review, still emit valid JSON with `status` set to "REJECTED" and an explanation in `feedback`.
+
 If `status` is "APPROVED", the loop ends. Be extremely strict. Only approve if ALL requirements are met and tests pass.

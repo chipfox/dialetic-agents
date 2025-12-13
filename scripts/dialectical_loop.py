@@ -6,7 +6,7 @@ import time
 import argparse
 import tempfile
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Configuration
 MAX_TURNS = 10
@@ -25,13 +25,18 @@ AGENT_DIR = SKILL_ROOT / "agents"
 # RunLog: Structured Observability
 # ============================================================================
 
+
+def utc_now_iso():
+    """Timezone-aware UTC timestamps with trailing Z."""
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
 class RunLog:
     """Captures observability events for a dialectical loop run."""
 
     def __init__(self, verbosity="normal"):
         self.verbosity = verbosity
-        self.run_id = f"dialectical-loop-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-        self.timestamp_start = datetime.utcnow().isoformat() + "Z"
+        self.run_id = f"dialectical-loop-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
+        self.timestamp_start = utc_now_iso()
         self.turns = []
         self.architect_invoked = False
         self.errors = []
@@ -51,7 +56,7 @@ class RunLog:
             "total_tokens_est": input_tokens_est + output_tokens_est,
             "outcome": "error" if error else "success",
             "duration_s": round(duration_s, 2),
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": utc_now_iso(),
         }
         if details:
             event.update(details)
@@ -98,7 +103,7 @@ class RunLog:
         return {
             "run_id": self.run_id,
             "timestamp_start": self.timestamp_start,
-            "timestamp_end": datetime.utcnow().isoformat() + "Z",
+            "timestamp_end": utc_now_iso(),
             "verbosity": self.verbosity,
             "turns": self.turns,
             "summary": self.get_summary(),
@@ -301,20 +306,43 @@ def strip_fenced_block(text):
     return text
 
 def extract_json(text):
-    try:
-        # Find JSON block
-        start = text.find("```json")
-        if start != -1:
-            start += 7
-            end = text.find("```", start)
-            if end != -1:
-                json_str = text[start:end].strip()
-                return json.loads(json_str)
-        # Try parsing raw text if no block
-        return json.loads(text)
-    except json.JSONDecodeError:
-        print("Failed to parse JSON from response.")
+    if not text:
         return None
+
+    candidates = []
+
+    def add_candidate(candidate_text):
+        if candidate_text and candidate_text.strip():
+            candidates.append(candidate_text.strip())
+
+    # Prefer fenced JSON blocks first
+    for fence in ["```json", "```"]:
+        start = text.find(fence)
+        while start != -1:
+            block_start = start + len(fence)
+            end = text.find("```", block_start)
+            if end == -1:
+                break
+            add_candidate(text[block_start:end])
+            start = text.find(fence, end + 3)
+
+    # Add full text as a fallback
+    add_candidate(text)
+
+    # Add the first detected JSON object slice
+    first_brace = text.find("{")
+    last_brace = text.rfind("}")
+    if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+        add_candidate(text[first_brace : last_brace + 1])
+
+    for candidate in candidates:
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+
+    print("Failed to parse JSON from response.")
+    return None
 
 def run_architect_phase(requirements, current_files, requirements_file, spec_file, architect_model, run_log=None, verbosity="normal"):
     log_print(f"Architect is analyzing requirements...", verbosity=verbosity)
