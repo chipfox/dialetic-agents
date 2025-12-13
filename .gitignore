@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+
+# Dialectical loop temp files
+# (Stored in OS temp dir at runtime, but keep generic ignores anyway)
+temp_context.txt
+
+# Editor
+.vscode/
+.DS_Store
