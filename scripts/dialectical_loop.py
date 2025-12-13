@@ -150,7 +150,7 @@ def log_print(message, verbosity="normal", threshold="normal"):
     """Print to stderr if verbosity is at or above threshold."""
     levels = {"quiet": 0, "normal": 1, "verbose": 2}
     if levels.get(verbosity, 1) >= levels.get(threshold, 1):
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         print(f"[{timestamp}] {message}", file=sys.stderr)
 
 def load_file(path):
