@@ -66,6 +66,56 @@ Run the installed loop script from the project directory you want to modify:
 - `--coach-model MODEL`
 - `--verbosity {quiet,normal,verbose}` (default: normal) — controls observability output
 
+## Recommended Copilot Models
+
+The skill works with any Copilot CLI-available model. Based on cost-to-capability analysis:
+
+### Tier 1: Recommended (Best Balance)
+
+- **Architect**: `claude-sonnet-4.5` (128K context, 1x cost)
+- **Player**: `gemini-3-pro-preview` (109K context, 1x cost) or `claude-sonnet-4.5` (more stable)
+- **Coach**: `claude-sonnet-4.5` (128K context, 1x cost)
+
+Cost per 5-turn loop: ~38 cost units. Stable, proven, good reasoning across all roles.
+
+```bash
+python ~/.claude/skills/dialectical-loop/scripts/dialectical_loop.py --max-turns 10 \
+  --architect-model claude-sonnet-4.5 \
+  --player-model gemini-3-pro-preview \
+  --coach-model claude-sonnet-4.5
+```
+
+### Tier 2: Budget (Cost-Optimized)
+
+- **Architect**: `gemini-3-pro-preview` (109K context, 1x cost)
+- **Player**: `claude-haiku-4.5` (128K context, 0.33x cost) — fast & cheap, test on your codebase first
+- **Coach**: `claude-sonnet-4.5` (need strong critic)
+
+Cost per 5-turn loop: ~26 cost units (32% cheaper). Good for rapid iteration or simple code tasks.
+
+```bash
+python ~/.claude/skills/dialectical-loop/scripts/dialectical_loop.py --max-turns 10 \
+  --architect-model gemini-3-pro-preview \
+  --player-model claude-haiku-4.5 \
+  --coach-model claude-sonnet-4.5
+```
+
+### Tier 3: Premium (Quality-Optimized)
+
+- **Architect**: `claude-opus-4.5` (128K context, 3x cost) — absolute best reasoning
+- **Player**: `claude-sonnet-4.5` (solid code gen)
+- **Coach**: `claude-opus-4.5` (most credible critic)
+
+Cost per 5-turn loop: ~79 cost units (2.1x Tier 1). Use for mission-critical or highly complex systems.
+
+**Note**: Tier 3 uses Preview models; test before production.
+
+### Avoid
+
+- Claude Opus 4.1 (10x cost, worse than 4.5 Preview)
+- Claude Haiku for Architect/Coach (too weak for planning/judgment)
+- Models with unclear pricing ("0x" cost)
+
 ## Observability & Monitoring
 
 The loop emits **structured observability** to help you monitor loop health and token usage:

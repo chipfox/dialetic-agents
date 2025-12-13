@@ -6,7 +6,7 @@ __pycache__/
 *.pyo
 *.pyd
 *.log
-
+copilot-models.md
 # Dialectical loop temp files
 # (Stored in OS temp dir at runtime, but keep generic ignores anyway)
 temp_context.txt

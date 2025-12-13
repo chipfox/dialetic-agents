@@ -55,10 +55,49 @@ In the project directory you want to modify:
 - `--requirements-file REQUIREMENTS.md`
 - `--spec-file SPECIFICATION.md`
 - `--skip-architect`
-- `--player-model gemini-3-pro-preview`
-- `--coach-model claude-sonnet-4.5`
-- `--architect-model claude-sonnet-4.5`
 - `--verbosity {quiet,normal,verbose}` (default: normal)
+
+### Model selection (Architect, Player, Coach)
+
+This skill works with any Copilot CLI model. Choose a tier based on your budget and quality needs:
+
+#### Tier 1: Recommended (Balanced)
+
+```bash
+--architect-model claude-sonnet-4.5 \
+--player-model gemini-3-pro-preview \
+--coach-model claude-sonnet-4.5
+```
+
+Cost: ~38 units per 5-turn loop. Stable, proven, good reasoning.
+
+#### Tier 2: Budget (Cost-optimized)
+
+```bash
+--architect-model gemini-3-pro-preview \
+--player-model claude-haiku-4.5 \
+--coach-model claude-sonnet-4.5
+```
+
+Cost: ~26 units (32% cheaper). Good for rapid iteration; test Haiku on your codebase first.
+
+#### Tier 3: Premium (Quality-optimized)
+
+```bash
+--architect-model claude-opus-4.5 \
+--player-model claude-sonnet-4.5 \
+--coach-model claude-opus-4.5
+```
+
+Cost: ~79 units (2.1x Tier 1). Use for mission-critical systems; Opus 4.5 is Preview (test first).
+
+#### Why these choices?
+
+- **Architect** needs strong reasoning and large context (spec generation is cognitively demanding)
+- **Player** focuses on code generation; Haiku is fast & cheap for most code tasks
+- **Coach** must be a credible critic; keep it strong (reason parity with Architect)
+
+See [copilot-models.md](copilot-models.md) for full model comparison.
 
 ## Observability: Know What Your Loop Is Doing
 
