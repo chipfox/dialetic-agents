@@ -64,6 +64,31 @@ Run the installed loop script from the project directory you want to modify:
 - `--architect-model MODEL`
 - `--player-model MODEL`
 - `--coach-model MODEL`
+- `--verbosity {quiet,normal,verbose}` (default: normal) — controls observability output
+
+## Observability & Monitoring
+
+The loop emits **structured observability** to help you monitor loop health and token usage:
+
+- **Verbosity levels** (set via `--verbosity`):
+  - `quiet`: Only final summary (turn count, success/fail, errors) printed to stderr.
+  - `normal` (default): Real-time per-turn updates to stderr (one line per agent action) + final summary.
+  - `verbose`: All the above + detailed snippets of prompts, responses, and intermediate state (best for debugging).
+
+- **Observability log file**: A JSON file is automatically written to the project root with the name `dialectical-loop-TIMESTAMP.json`. This contains:
+  - Per-turn events (agent, model, action, tokens used, duration, outcome).
+  - Final summary (total tokens, agent call counts, approval/rejection counts).
+  - Errors and warnings (if any).
+
+**Token estimates**: The orchestrator uses a simple heuristic (1 token ≈ 4 chars) to estimate token usage per turn. This helps you avoid runaway loops that burn tokens on trivial edits.
+
+### Example: quiet mode (minimal output)
+
+```bash
+python ~/.claude/skills/dialectical-loop/scripts/dialectical_loop.py --max-turns 10 --verbosity quiet
+```
+
+Outputs only the final summary + log file path to stderr.
 
 ## Examples
 

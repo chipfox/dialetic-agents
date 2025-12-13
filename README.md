@@ -58,6 +58,57 @@ In the project directory you want to modify:
 - `--player-model gemini-3-pro-preview`
 - `--coach-model claude-sonnet-4.5`
 - `--architect-model claude-sonnet-4.5`
+- `--verbosity {quiet,normal,verbose}` (default: normal)
+
+## Observability: Know What Your Loop Is Doing
+
+This skill includes **built-in observability** to prevent token waste and give you confidence the loop is functioning correctly.
+
+### How observability works
+
+Every time you run the script, it automatically writes a **JSON observability log** to your project directory (filename like `dialectical-loop-20251213-143115.json`). This log captures:
+
+- **Per-turn breakdown**: agent (Architect/Player/Coach), model used, action, tokens (estimated), outcome, duration.
+- **Summary stats**: total turns, total tokens, approval/rejection counts, any errors.
+- **Alerts**: if a loop gets stuck rejecting, or tokens are unexpectedly high.
+
+### Verbosity levels
+
+Control detail depth without changing behavior:
+
+```bash
+# Quiet: minimal output (only summary + log file path)
+python ~/.claude/skills/dialectical-loop/scripts/dialectical_loop.py --max-turns 10 --verbosity quiet
+
+# Normal (default): one-line-per-turn feedback + summary
+python ~/.claude/skills/dialectical-loop/scripts/dialectical_loop.py --max-turns 10
+
+# Verbose: detailed debugging output (includes snippets)
+python ~/.claude/skills/dialectical-loop/scripts/dialectical_loop.py --max-turns 10 --verbosity verbose
+```
+
+### Interpreting logs
+
+Open the generated JSON file to diagnose loop health:
+
+```json
+{
+  "summary": {
+    "total_turns_executed": 3,
+    "total_tokens_estimated": 12500,
+    "coach_calls": {
+      "approved": 1,
+      "rejected": 1
+    }
+  }
+}
+```
+
+**What to watch for:**
+
+- **High token count**: May indicate spec is too verbose; try refining REQUIREMENTS.md.
+- **Many Coach rejections**: Player is misunderstanding the spec; check SPECIFICATION.md clarity.
+- **Errors in logs**: Review stderr output + the error field in the JSON.
 
 ## Using other LLM providers (OpenAI, Anthropic, Gemini, Azure, Bedrock, local)
 
