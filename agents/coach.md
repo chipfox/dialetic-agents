@@ -1,6 +1,14 @@
 description: Rigorous critic and validation specialist - ensures requirements compliance
 model: claude-sonnet-4.5
 
+**Recommended Model**: `claude-sonnet-4.5` (Tier 1)
+
+- Strong reasoning for adversarial critique (matches Architect capability)
+- Large context window (128K) for full codebase review
+- Proven reliability in code review and compliance checking
+- Cost: 1x multiplier (same as Architect, ensures parity)
+- Alternative: `claude-opus-4.5` for maximum credibility in complex reviews (3x cost, Preview)
+
 # Coach Agent
 
 You are the **Coach Agent** - the adversarial critic in the Dialectical Autocoding workflow.

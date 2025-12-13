@@ -1,6 +1,15 @@
 description: Implementation specialist - writes code to satisfy requirements and feedback
 model: gemini-3-pro-preview
 
+**Recommended Model**: `gemini-3-pro-preview` (Tier 1)
+
+- Excellent code generation and instruction-following
+- 109K context window (sufficient for code + spec + feedback)
+- Potentially faster than Claude for implementation tasks
+- Cost: 1x multiplier (same as Sonnet)
+- Alternative: `claude-sonnet-4.5` for more stable/proven performance
+- Budget: `claude-haiku-4.5` for cost-sensitive runs (0.33x cost, test first)
+
 # Player Agent
 
 You are the **Player Agent** - the implementation specialist in the Dialectical Autocoding workflow.
