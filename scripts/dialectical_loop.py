@@ -413,8 +413,46 @@ def validate_source_text(path: str, content: str):
         return True, ""
 
     if suffix in {".js", ".jsx", ".ts", ".tsx"}:
-        return _basic_balance_check_js_ts(content or "")
+        text = content or ""
+        ok, err = _basic_balance_check_js_ts(text)
+        if not ok:
+            return ok, err
+        ok_code, err_code = _looks_like_code_js_ts(text, suffix)
+        if not ok_code:
+            return False, err_code
+        return True, ""
 
+    return True, ""
+
+
+def _looks_like_code_js_ts(text: str, suffix: str) -> tuple[bool, str]:
+    # Heuristic guardrail: prevent overwriting source files with plain-English prose.
+    # This intentionally stays loose (avoid false positives) but catches the common
+    # failure mode: "Fixing the file requires viewing it first..." written into .ts/.tsx.
+    stripped = (text or "").strip()
+    if not stripped:
+        return False, "empty content"
+
+    # Quick wins: presence of typical JS/TS syntax characters.
+    if any(tok in stripped for tok in (";", "=>", "export ", "import ", "function ", "class ", "interface ", "type ", "return ")):
+        return True, ""
+
+    # JSX/TSX often contains tags.
+    if suffix in {".jsx", ".tsx"}:
+        if re.search(r"<\s*[A-Za-z][A-Za-z0-9]*\b", stripped):
+            return True, ""
+
+    # If it contains braces/parens/brackets at all, it's likely code-like.
+    if re.search(r"[\{\}\(\)\[\]]", stripped):
+        return True, ""
+
+    # If the first non-empty line looks like a sentence (multiple spaces, ends with a period)
+    # and there's no other code signal, treat as likely prose.
+    first_line = stripped.splitlines()[0].strip()
+    if len(first_line) > 20 and " " in first_line and re.search(r"[a-zA-Z]", first_line) and not re.search(r"[=<>:\-_/\\]", first_line):
+        return False, "content does not look like JS/TS source (likely prose)"
+
+    # Otherwise accept (could be e.g. a minimal identifier file).
     return True, ""
 
 def _looks_like_unix_command(command: str) -> bool:
@@ -446,6 +484,382 @@ def _looks_like_unix_command(command: str) -> bool:
     # Common POSIX-only syntax hints
     if "$(" in cmd or "`" in cmd or cmd.startswith("./"):
         return True
+    return False
+
+
+def _extract_relevant_paths_from_output(output: str, root_dir: str = ".") -> list[str]:
+    """Best-effort extraction of repo-relative paths from build/lint output."""
+    text = output or ""
+    candidates: set[str] = set()
+
+    # Common Unix/Next.js style: ./src/foo.ts:12:34
+    for m in re.finditer(r"(?P<p>\./[^\s:]+\.(?:ts|tsx|js|jsx|json|md|css|scss))(?::\d+)*(?:\b|$)", text):
+        candidates.add(m.group("p"))
+
+    # Repo-relative: src/foo.ts:12:34
+    for m in re.finditer(r"(?P<p>(?:src|scripts|agents|app|pages|components|lib|types)/[^\s:]+\.(?:ts|tsx|js|jsx|json|md|css|scss))(?::\d+)*(?:\b|$)", text):
+        candidates.add(m.group("p"))
+
+    # Windows absolute: C:\...\src\foo.ts:12:34
+    for m in re.finditer(r"(?P<p>[A-Za-z]:\\[^\r\n:]+\.(?:ts|tsx|js|jsx|json|md|css|scss))(?::\d+)*(?:\b|$)", text):
+        candidates.add(m.group("p"))
+
+    rel_paths: list[str] = []
+    for p in candidates:
+        try:
+            p2 = p.rstrip(".,)")
+            if p2.startswith("./"):
+                p2 = p2[2:]
+            if re.match(r"^[A-Za-z]:\\", p2):
+                # Convert to repo-relative if possible
+                abs_path = os.path.abspath(p2)
+                rel = os.path.relpath(abs_path, os.path.abspath(root_dir))
+                rel = rel.replace("\\", "/")
+                if not rel.startswith(".."):
+                    p2 = rel
+                else:
+                    continue
+            rel_paths.append(p2)
+        except Exception:
+            continue
+
+    # De-dupe while preserving order
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for p in rel_paths:
+        if p not in seen:
+            seen.add(p)
+            ordered.append(p)
+    return ordered
+
+
+def _read_file_head(rel_path: str, max_lines: int = 40, max_chars: int = 4000) -> str:
+    """Read the first N lines of a file (repo-relative) with lightweight line numbers."""
+    try:
+        p = Path(rel_path)
+        if p.is_absolute():
+            abs_path = p
+        else:
+            abs_path = Path(".") / p
+        if not abs_path.exists() or not abs_path.is_file():
+            return ""
+
+        lines = []
+        total = 0
+        with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
+            for i, line in enumerate(f, start=1):
+                if i > max_lines:
+                    break
+                chunk = f"{i:>3} | {line.rstrip()}"
+                total += len(chunk) + 1
+                if total > max_chars:
+                    break
+                lines.append(chunk)
+        return "\n".join(lines).rstrip()
+    except Exception:
+        return ""
+
+
+def _extract_command_output_section(command_outputs: str, needle: str) -> str:
+    """Extract the Output section for the first command whose line contains `needle`."""
+    text = command_outputs or ""
+    if not text:
+        return ""
+    sections = text.split("Command: ")
+    for sec in sections:
+        if not sec.strip():
+            continue
+        first_line_end = sec.find("\n")
+        cmd_line = sec[:first_line_end] if first_line_end != -1 else sec
+        if needle in cmd_line:
+            # Find Output:\n marker
+            out_marker = "Output:\n"
+            idx = sec.find(out_marker)
+            if idx == -1:
+                return sec.strip()
+            return sec[idx + len(out_marker) :].strip()
+    return ""
+
+
+def _extract_first_ts_error_block(text: str, max_chars: int = 1200) -> str:
+    """Best-effort extraction of the first TS/Next.js error block from build output."""
+    s = (text or "").strip()
+    if not s:
+        return ""
+
+    # Prefer Next.js style blocks anchored by "Failed to compile." or "Type error:".
+    anchor_idx = s.find("Failed to compile.")
+    if anchor_idx == -1:
+        anchor_idx = s.find("Type error:")
+    if anchor_idx == -1:
+        # Fallback: first occurrence of "error" line
+        m = re.search(r"(?im)^.*\berror\b.*$", s)
+        anchor_idx = m.start(0) if m else 0
+
+    chunk = s[anchor_idx:]
+    # Stop at a repeated "Command:" marker if present (defensive)
+    stop = chunk.find("Command:")
+    if stop != -1:
+        chunk = chunk[:stop]
+
+    return truncate_output(chunk.strip(), max_chars=max_chars) or ""
+
+
+def _parse_ts_missing_property_error(text: str) -> dict:
+    """Parse errors like: Property 'x' does not exist on type 'Y'."""
+    s = text or ""
+    m = re.search(r"Property\s+'(?P<prop>[^']+)'\s+does not exist on type\s+'(?P<typ>[^']+)'", s)
+    if not m:
+        return {}
+    file_m = re.search(r"(?m)^(?:\./)?(?P<file>(?:src|app|pages|components|lib|types)/[^\s:]+\.(?:ts|tsx|js|jsx)):(?P<line>\d+):(?P<col>\d+)", s)
+    return {
+        "property": m.group("prop"),
+        "type": m.group("typ"),
+        "file": (file_m.group("file") if file_m else ""),
+        "line": (int(file_m.group("line")) if file_m else None),
+        "col": (int(file_m.group("col")) if file_m else None),
+    }
+
+
+def _resolve_ts_module_to_file(from_file: str, module_spec: str) -> str:
+    """Resolve a TS/JS module specifier to a repo-relative file path when possible."""
+    spec = (module_spec or "").strip()
+    if not spec:
+        return ""
+
+    base_dir = Path(from_file).parent if from_file else Path(".")
+
+    if spec.startswith("@/"):
+        rel = Path("src") / spec[2:]
+    elif spec.startswith("./") or spec.startswith("../"):
+        rel = (base_dir / spec).resolve()
+        try:
+            rel = Path(os.path.relpath(str(rel), str(Path(".").resolve())))
+        except Exception:
+            return ""
+    else:
+        return ""
+
+    # Try common TS entrypoint patterns
+    candidates = []
+    if rel.suffix:
+        candidates.append(rel)
+    else:
+        candidates.extend(
+            [
+                Path(str(rel) + ".ts"),
+                Path(str(rel) + ".tsx"),
+                Path(str(rel) + ".d.ts"),
+                rel / "index.ts",
+                rel / "index.tsx",
+            ]
+        )
+
+    for c in candidates:
+        try:
+            abs_c = (Path(".") / c).resolve()
+            if abs_c.exists() and abs_c.is_file():
+                return str(c).replace("\\", "/")
+        except Exception:
+            continue
+    return ""
+
+
+def _extract_ts_type_definition_snippet(type_file: str, type_name: str, max_lines: int = 120) -> str:
+    """Extract an exported interface/type definition block for `type_name` from `type_file`."""
+    try:
+        abs_path = (Path(".") / type_file).resolve()
+        if not abs_path.exists() or not abs_path.is_file():
+            return ""
+        lines = abs_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except Exception:
+        return ""
+
+    # Find start
+    start_idx = -1
+    start_pat = re.compile(rf"^\s*export\s+(interface|type)\s+{re.escape(type_name)}\b")
+    for i, line in enumerate(lines):
+        if start_pat.search(line):
+            start_idx = i
+            break
+    if start_idx == -1:
+        # Fallback: non-exported (still useful)
+        alt_pat = re.compile(rf"^\s*(interface|type)\s+{re.escape(type_name)}\b")
+        for i, line in enumerate(lines):
+            if alt_pat.search(line):
+                start_idx = i
+                break
+    if start_idx == -1:
+        return ""
+
+    # Capture block
+    out = []
+    brace = 0
+    started_brace = False
+    for j in range(start_idx, min(len(lines), start_idx + max_lines)):
+        l = lines[j]
+        out.append(f"{j+1:>4} | {l}")
+        # naive brace tracking (good enough for interface/type blocks)
+        brace += l.count("{")
+        brace -= l.count("}")
+        if l.count("{"):
+            started_brace = True
+        if started_brace and brace <= 0 and ("}" in l):
+            break
+        if not started_brace and l.rstrip().endswith(";"):
+            break
+    return "\n".join(out).rstrip()
+
+
+def _find_import_for_symbol(file_head: str, symbol_name: str) -> str:
+    """Find module specifier that imports `symbol_name` in a file header snippet."""
+    if not file_head or not symbol_name:
+        return ""
+    # Match: import { A, B as C } from 'x'
+    for m in re.finditer(r"(?m)^\s*import\s+(?:type\s+)?\{(?P<body>[^}]+)\}\s+from\s+['\"](?P<mod>[^'\"]+)['\"]", file_head):
+        body = m.group("body")
+        names = [n.strip() for n in body.split(",") if n.strip()]
+        for n in names:
+            # handle "Foo as Bar"
+            parts = [p.strip() for p in n.split(" as ")]
+            if parts and parts[0] == symbol_name:
+                return m.group("mod")
+    return ""
+
+
+def summarize_command_outputs(command_outputs: str) -> str:
+    """Create a small, high-signal summary of command outputs to reduce tokens."""
+    if not command_outputs:
+        return ""
+
+    build_out = _extract_command_output_section(command_outputs, "npm run build")
+    lint_out = _extract_command_output_section(command_outputs, "npm run lint")
+
+    primary_err = _extract_first_ts_error_block(build_out) if build_out else ""
+    if not primary_err:
+        primary_err = _extract_first_ts_error_block(command_outputs)
+
+    paths = _extract_relevant_paths_from_output(command_outputs, root_dir=".")
+    paths = paths[:10]
+
+    expected_got_lines = []
+    for line in (build_out or command_outputs).splitlines():
+        if re.search(r"\bExpected\b|\bReceived\b|\bbut required\b|\bassignable\b|\bdoes not exist on type\b", line):
+            expected_got_lines.append(line.strip())
+        if len(expected_got_lines) >= 12:
+            break
+
+    parts = []
+    if primary_err:
+        parts.append("PRIMARY ERROR (first block):\n" + primary_err)
+    if paths:
+        parts.append("FILES MENTIONED:\n" + "\n".join(f"- {p}" for p in paths))
+    if expected_got_lines:
+        parts.append("KEY LINES:\n" + "\n".join(f"- {l}" for l in expected_got_lines))
+    if lint_out and not build_out:
+        parts.append("LINT (excerpt):\n" + truncate_output(lint_out, max_chars=800))
+    return "\n\n".join(parts).strip()
+
+
+def _extract_local_import_module_specs(file_path: str, max_lines: int = 120) -> list[str]:
+    """Extract local module specifiers from import/export-from statements (1 hop)."""
+    head = _read_file_head(file_path, max_lines=max_lines, max_chars=8000)
+    if not head:
+        return []
+    specs: list[str] = []
+    for m in re.finditer(r"(?m)^\s*(?:import|export)\s+.*?\s+from\s+['\"](?P<mod>[^'\"]+)['\"]", head):
+        mod = (m.group("mod") or "").strip()
+        if mod.startswith("./") or mod.startswith("../") or mod.startswith("@/"):
+            specs.append(mod)
+    # CommonJS require
+    for m in re.finditer(r"require\(\s*['\"](?P<mod>[^'\"]+)['\"]\s*\)", head):
+        mod = (m.group("mod") or "").strip()
+        if mod.startswith("./") or mod.startswith("../") or mod.startswith("@/"):
+            specs.append(mod)
+    # de-dupe
+    out = []
+    seen = set()
+    for s in specs:
+        if s not in seen:
+            seen.add(s)
+            out.append(s)
+    return out
+
+
+def _expand_paths_with_direct_imports(paths: list[str], max_total: int = 12) -> list[str]:
+    """Expand paths with their direct local imports (1 hop), keeping list small."""
+    if not paths:
+        return []
+    expanded: list[str] = []
+    seen: set[str] = set()
+
+    def add(p: str):
+        if not p:
+            return
+        p2 = p.replace("\\", "/")
+        if p2 not in seen:
+            seen.add(p2)
+            expanded.append(p2)
+
+    for p in paths:
+        add(p)
+        if len(expanded) >= max_total:
+            return expanded
+        for mod in _extract_local_import_module_specs(p):
+            resolved = _resolve_ts_module_to_file(p, mod)
+            if resolved:
+                add(resolved)
+                if len(expanded) >= max_total:
+                    return expanded
+    return expanded
+
+
+def _module_specifiers_for_file(rel_path: str) -> list[str]:
+    """Generate common import specifiers for a repo-relative file."""
+    p = (rel_path or "").replace("\\", "/")
+    if not p:
+        return []
+    # Strip extension
+    no_ext = re.sub(r"\.(tsx|ts|jsx|js)$", "", p)
+    specs = []
+    # Support common Next.js directory structures for @/ alias
+    for prefix in ("src/", "app/", "pages/", "lib/", "components/"):
+        if no_ext.startswith(prefix):
+            specs.append("@/" + no_ext[len(prefix):])
+            break
+    # Also allow importing the full path without ext (rare but possible)
+    specs.append(no_ext)
+    return list(dict.fromkeys(specs))
+
+
+def _is_new_file_referenced(new_file: str, edited_file_contents: dict[str, str]) -> bool:
+    """Guardrail: if we create a new file, ensure it is referenced by imports.
+
+    Accept if:
+    - any current edited file contains an import specifier for it, OR
+    - git grep finds an existing import/reference in the repo.
+    """
+    specs = _module_specifiers_for_file(new_file)
+    # If no specs could be generated for a code file, be conservative (deny creation)
+    # unless it's a non-code file (config, markdown, etc.)
+    if not specs:
+        is_code_file = new_file.endswith((".ts", ".tsx", ".js", ".jsx", ".py", ".java", ".cpp", ".c", ".go"))
+        return not is_code_file  # Allow non-code files, deny code files without import specs
+
+    for _path, content in (edited_file_contents or {}).items():
+        for s in specs:
+            if s and s in (content or ""):
+                return True
+
+    # Try fast repo search via git grep in common code directories (not just src/)
+    try:
+        for s in specs:
+            code, out, _ = _run_capture(["git", "grep", "-n", s, "--", "src", "app", "pages", "lib", "components"], cwd=".")
+            if code == 0 and out.strip():
+                return True
+    except Exception:
+        pass
+
     return False
 
 
@@ -1398,6 +1812,15 @@ def main():
         help="Skip Coach review if verification commands fail (exit code != 0)."
     )
     parser.add_argument(
+        "--max-fast-fail-retries",
+        type=int,
+        default=2,
+        help=(
+            "Maximum number of fast-fail retries allowed per turn before forcing a Coach review. "
+            "Helps avoid spending many Player calls without feedback."
+        ),
+    )
+    parser.add_argument(
         "--auto-fix",
         action="store_true",
         help="Attempt to run auto-fixers (e.g. 'npm run lint -- --fix') after Player edits."
@@ -1553,8 +1976,20 @@ def main():
         feedback = "No feedback yet. This is the first turn."
 
         auto_verify = not args.no_auto_verify
-        
-        for turn in range(1, max_turns + 1):
+
+        # A "turn" is defined as a full cycle that includes a Coach model call.
+        # If Coach is skipped (e.g., invalid Player JSON, write failures, fast-fail),
+        # we do NOT consume a turn; the next iteration reuses the same turn number.
+        turn = 1
+        skipped_without_coach = 0
+        max_skips_without_coach = max(50, max_turns * 10)
+
+        last_skip_reason = ""
+        last_fast_fail_outputs = ""
+        last_fast_fail_errors: list[str] = []
+        fast_fail_retries_this_turn = 0
+
+        while turn <= max_turns:
             log_print(f"Turn {turn}/{max_turns}", verbose=args.verbose, quiet=args.quiet)
             
             # Reload specs/requirements to capture any updates (e.g. Player marking items DONE)
@@ -1584,6 +2019,8 @@ def main():
                 except Exception:
                     baseline_verify_cmds = []
 
+            min_context_fast_fail_retry = (last_skip_reason == "fast-fail")
+
             player_input = (
                 f"REQUIREMENTS:\n{requirements}\n\nSPECIFICATION:\n{specification}\n\n"
                 f"FEEDBACK FROM PREVIOUS TURN:\n{feedback_for_player}"
@@ -1595,21 +2032,91 @@ def main():
                     + "\n".join(f"- {c}" for c in baseline_verify_cmds)
                 )
             
-            context_mode = args.context_mode
-            if context_mode == "auto" and turn > 1:
-                context_mode = "git-changed"
-
-            if context_mode == "git-changed":
-                changed_paths = get_git_changed_paths(repo_dir=".") or []
-                current_files, meta = build_changed_files_snapshot(
-                    changed_paths,
-                    root_dir=".",
-                    include_exts=include_exts,
-                    max_total_bytes=args.context_max_bytes,
-                    max_file_bytes=args.context_max_file_bytes,
-                    max_files=args.context_max_files,
+            # Context for Player: full snapshot on normal turns, minimal snapshot on fast-fail retries.
+            if min_context_fast_fail_retry:
+                relevant_paths = _extract_relevant_paths_from_output(last_fast_fail_outputs, root_dir=".")
+                relevant_paths = relevant_paths[: max(1, min(8, args.context_max_files))]
+                expanded_paths = _expand_paths_with_direct_imports(
+                    relevant_paths, max_total=max(4, min(12, args.context_max_files))
                 )
-                if not current_files:
+
+                player_input += "\n\nFAST-FAIL RETRY (MINIMAL CONTEXT):\n"
+                if last_fast_fail_errors:
+                    player_input += "Failing checks:\n" + "\n".join(f"- {e}" for e in last_fast_fail_errors) + "\n"
+                if last_fast_fail_outputs:
+                    summary = summarize_command_outputs(last_fast_fail_outputs)
+                    if summary:
+                        player_input += "\nCOMMAND OUTPUT SUMMARY:\n" + summary + "\n"
+                    else:
+                        player_input += "\nFailing command output (truncated):\n" + truncate_output(last_fast_fail_outputs) + "\n"
+
+                if relevant_paths:
+                    # Show the header of the primary failing file to reveal imports/source-of-truth types.
+                    head = _read_file_head(relevant_paths[0], max_lines=40, max_chars=3500)
+                    if head:
+                        player_input += (
+                            f"\nFAILING FILE HEADER (first ~40 lines): {relevant_paths[0]}\n"
+                            + head
+                            + "\n"
+                        )
+
+                        # If this is a TS missing-property error, include the type source-of-truth snippet.
+                        err_info = _parse_ts_missing_property_error(last_fast_fail_outputs)
+                        if err_info.get("type") and err_info.get("property"):
+                            mod = _find_import_for_symbol(head, err_info["type"])
+                            if mod:
+                                resolved = _resolve_ts_module_to_file(relevant_paths[0], mod)
+                                if resolved:
+                                    snippet = _extract_ts_type_definition_snippet(resolved, err_info["type"])
+                                    if snippet:
+                                        player_input += (
+                                            f"\nTYPE SOURCE OF TRUTH: {err_info['type']} (from {resolved})\n"
+                                            + snippet
+                                            + "\n"
+                                        )
+
+                    rel_files, rel_meta = build_changed_files_snapshot(
+                        expanded_paths,
+                        root_dir=".",
+                        include_exts=include_exts,
+                        max_total_bytes=min(args.context_max_bytes, 30_000),
+                        max_file_bytes=min(args.context_max_file_bytes, 10_000),
+                        max_files=min(args.context_max_files, len(expanded_paths)),
+                    )
+                    trunc_note = " (TRUNCATED)" if rel_meta.get("truncated") else ""
+                    meta_files = len(rel_meta["included_files"])
+                    meta_bytes = rel_meta["total_bytes"]
+                    player_input += (
+                        "\nRELEVANT FILES"
+                        f"{trunc_note} [files={meta_files}, bytes={meta_bytes}]:\n{rel_files}"
+                    )
+                else:
+                    player_input += "\n(No file paths could be extracted from failing output.)\n"
+            else:
+                context_mode = args.context_mode
+                if context_mode == "auto" and turn > 1:
+                    context_mode = "git-changed"
+
+                if context_mode == "git-changed":
+                    changed_paths = get_git_changed_paths(repo_dir=".") or []
+                    current_files, meta = build_changed_files_snapshot(
+                        changed_paths,
+                        root_dir=".",
+                        include_exts=include_exts,
+                        max_total_bytes=args.context_max_bytes,
+                        max_file_bytes=args.context_max_file_bytes,
+                        max_files=args.context_max_files,
+                    )
+                    if not current_files:
+                        current_files, meta = build_codebase_snapshot(
+                            root_dir=".",
+                            include_exts=include_exts,
+                            exclude_dirs=exclude_dirs,
+                            max_total_bytes=args.context_max_bytes,
+                            max_file_bytes=args.context_max_file_bytes,
+                            max_files=args.context_max_files,
+                        )
+                else:
                     current_files, meta = build_codebase_snapshot(
                         root_dir=".",
                         include_exts=include_exts,
@@ -1618,25 +2125,16 @@ def main():
                         max_file_bytes=args.context_max_file_bytes,
                         max_files=args.context_max_files,
                     )
-            else:
-                current_files, meta = build_codebase_snapshot(
-                    root_dir=".",
-                    include_exts=include_exts,
-                    exclude_dirs=exclude_dirs,
-                    max_total_bytes=args.context_max_bytes,
-                    max_file_bytes=args.context_max_file_bytes,
-                    max_files=args.context_max_files,
-                )
 
-            if current_files:
-                trunc_note = " (TRUNCATED)" if meta.get("truncated") else ""
-                meta_files = len(meta["included_files"])
-                meta_bytes = meta["total_bytes"]
-                player_input += (
-                    "\n\nCURRENT CODEBASE"
-                    f"{trunc_note} [files={meta_files}, bytes={meta_bytes}]:"
-                    f"\n{current_files}"
-                )
+                if current_files:
+                    trunc_note = " (TRUNCATED)" if meta.get("truncated") else ""
+                    meta_files = len(meta["included_files"])
+                    meta_bytes = meta["total_bytes"]
+                    player_input += (
+                        "\n\nCURRENT CODEBASE"
+                        f"{trunc_note} [files={meta_files}, bytes={meta_bytes}]:"
+                        f"\n{current_files}"
+                    )
 
             # Player
             player_response = get_llm_response(
@@ -1650,6 +2148,20 @@ def main():
             
             if not player_response:
                 log_print(f"[Player] No response.", verbose=args.verbose, quiet=args.quiet)
+                # Reset fast-fail state to prevent stale context on next iteration
+                last_skip_reason = ""
+                last_fast_fail_outputs = ""
+                last_fast_fail_errors = []
+                fast_fail_retries_this_turn = 0
+                skipped_without_coach += 1
+                if skipped_without_coach > max_skips_without_coach:
+                    error_msg = (
+                        "Aborting: too many iterations without a Coach review. "
+                        "Player is repeatedly failing before Coach can run."
+                    )
+                    log_print(error_msg, verbose=True, quiet=args.quiet)
+                    run_log.report(status="failed", message=error_msg)
+                    break
                 continue
 
             player_data = extract_json(
@@ -1685,6 +2197,19 @@ def main():
                         "Your last response was not valid JSON. Response must be a valid JSON object. "
                         "Return ONLY one fenced ```json block containing a single JSON object."
                     )
+                    # Reset fast-fail state to prevent stale context on next iteration
+                    last_skip_reason = ""
+                    last_fast_fail_outputs = ""
+                    last_fast_fail_errors = []
+                    fast_fail_retries_this_turn = 0
+                    skipped_without_coach += 1
+                    if skipped_without_coach > max_skips_without_coach:
+                        error_msg = (
+                            "Aborting: too many iterations without a Coach review due to invalid Player JSON."
+                        )
+                        log_print(error_msg, verbose=True, quiet=args.quiet)
+                        run_log.report(status="failed", message=error_msg)
+                        break
                     continue
             
             if args.verbose:
@@ -1717,7 +2242,29 @@ def main():
             # Apply Edits
             files_changed = []
             file_write_errors = []
+            new_files_created = []
             if "files" in player_data:
+                # Determine which files are new before writing
+                for path in player_data["files"].keys():
+                    try:
+                        if not Path(path).exists():
+                            new_files_created.append(path)
+                    except Exception:
+                        pass
+
+                # Guardrail: if Player creates a new file, ensure it is referenced.
+                # This prevents "invented" helper components that are never imported.
+                for nf in list(new_files_created):
+                    if not _is_new_file_referenced(nf, player_data.get("files") or {}):
+                        file_write_errors.append(
+                            f"Refusing to create new file '{nf}': no import/reference found for it. "
+                            "If you create a new file, you must also add/adjust an import that references it."
+                        )
+                        # Remove from write set to avoid creating it.
+                        try:
+                            del player_data["files"][nf]
+                        except Exception:
+                            pass
                 for path, content in player_data["files"].items():
                     ok_syntax, err_syntax = validate_source_text(path, content)
                     if not ok_syntax:
@@ -1757,7 +2304,20 @@ def main():
                     result="error",
                     error="\n".join(file_write_errors)[:1000],
                 )
+                # Reset fast-fail state to prevent stale context on next iteration
+                last_skip_reason = ""
+                last_fast_fail_outputs = ""
+                last_fast_fail_errors = []
+                fast_fail_retries_this_turn = 0
                 # Skip Coach review: cannot proceed without successful writes.
+                skipped_without_coach += 1
+                if skipped_without_coach > max_skips_without_coach:
+                    error_msg = (
+                        "Aborting: too many iterations without a Coach review due to persistent write failures."
+                    )
+                    log_print(error_msg, verbose=True, quiet=args.quiet)
+                    run_log.report(status="failed", message=error_msg)
+                    break
                 continue
             
             # Auto-Fix (if enabled)
@@ -1802,7 +2362,20 @@ def main():
                         "You MUST modify the codebase to address the feedback. "
                         "If you think no changes are needed, you must explain why in 'thought_process' and run a verification command."
                     )
+                    # Reset fast-fail state to prevent leakage to next iteration
+                    last_skip_reason = ""
+                    last_fast_fail_outputs = ""
+                    last_fast_fail_errors = []
+                    fast_fail_retries_this_turn = 0
                     # Skip Coach review to save tokens/time since nothing changed
+                    skipped_without_coach += 1
+                    if skipped_without_coach > max_skips_without_coach:
+                        error_msg = (
+                            "Aborting: too many iterations without a Coach review due to repeated no-op Player turns."
+                        )
+                        log_print(error_msg, verbose=True, quiet=args.quiet)
+                        run_log.report(status="failed", message=error_msg)
+                        break
                     continue
             
             # Run Commands
@@ -1860,21 +2433,50 @@ def main():
 
             # Check for Fast Fail (Verification Failure)
             if args.fast_fail and verification_errors:
-                log_print(f"[Fast Fail] Verification failed ({len(verification_errors)} errors). Skipping Coach.", verbose=args.verbose, quiet=args.quiet)
+                fast_fail_retries_this_turn += 1
+                bypass_fast_fail = fast_fail_retries_this_turn > int(getattr(args, "max_fast_fail_retries", 2))
+
+                if bypass_fast_fail:
+                    log_print(
+                        f"[Fast Fail] Verification failed; retry cap reached ({fast_fail_retries_this_turn}). Forcing Coach.",
+                        verbose=args.verbose,
+                        quiet=args.quiet,
+                    )
+                    run_log.log_event(
+                        turn_number=turn,
+                        phase="loop",
+                        agent="system",
+                        model="orchestrator",
+                        action="fast_fail_cap",
+                        result="success",
+                        details={"retries": fast_fail_retries_this_turn, "errors": verification_errors},
+                    )
+                    # Keep feedback, but proceed to Coach instead of skipping.
+                    feedback = (
+                        "VERIFICATION FAILED (Coach forced due to retry cap).\n" +
+                        "Errors:\n" + "\n".join(f"- {e}" for e in verification_errors)
+                    )
+                else:
+                    log_print(
+                        f"[Fast Fail] Verification failed ({len(verification_errors)} errors). Skipping Coach.",
+                        verbose=args.verbose,
+                        quiet=args.quiet,
+                    )
                 feedback = (
                     "AUTOMATIC REJECTION (Fast Fail):\n"
                     "The following verification commands failed:\n" + 
                     "\n".join(f"- {e}" for e in verification_errors) + 
-                    "\n\nFULL COMMAND OUTPUT:\n" + command_outputs + 
+                    "\n\nCOMMAND OUTPUT SUMMARY:\n" + (summarize_command_outputs(command_outputs) or "(none)") +
+                    "\n\nCOMMAND OUTPUT (TRUNCATED):\n" + truncate_output(command_outputs, max_chars=2500) + 
                     "\n\nYou must fix these errors before the Coach will review your code."
                 )
                 
-                # Log the skipped coach turn
+                # Log the fast-fail as a system event (Coach was not called).
                 run_log.log_event(
                     turn_number=turn,
                     phase="loop",
-                    agent="coach",
-                    model="system",
+                    agent="system",
+                    model="orchestrator",
                     action="fast_fail",
                     result="success",
                     details={
@@ -1883,10 +2485,26 @@ def main():
                         "errors": verification_errors
                     }
                 )
-                continue
+                last_skip_reason = "fast-fail"
+                last_fast_fail_outputs = command_outputs
+                last_fast_fail_errors = list(verification_errors)
+                if not bypass_fast_fail:
+                    skipped_without_coach += 1
+                    if skipped_without_coach > max_skips_without_coach:
+                        error_msg = (
+                            "Aborting: too many iterations without a Coach review due to repeated fast-fail verification."
+                        )
+                        log_print(error_msg, verbose=True, quiet=args.quiet)
+                        run_log.report(status="failed", message=error_msg)
+                        break
+                    continue
 
             # --- Coach Turn ---
             log_print(f"[Coach] ({args.coach_model}) Reviewing...", verbose=args.verbose, quiet=args.quiet)
+            last_skip_reason = ""
+            last_fast_fail_outputs = ""
+            last_fast_fail_errors = []
+            fast_fail_retries_this_turn = 0
             
             # Include a names-only repo file list ONLY when Coach is focusing on recent edits.
             # This prevents token bloat when the Coach already receives a broad codebase snapshot.
@@ -1901,7 +2519,8 @@ def main():
                 f"- edited_files: {json.dumps(files_changed, ensure_ascii=False)}\n"
                 f"- file_write_errors: {len(file_write_errors) if 'file_write_errors' in locals() else 0}\n\n"
                 f"PLAYER OUTPUT:\n{json.dumps(player_data, ensure_ascii=False, separators=(',', ':'))}\n\n"
-                f"COMMAND OUTPUTS:\n{command_outputs}\n\n"
+                f"COMMAND OUTPUT SUMMARY:\n{summarize_command_outputs(command_outputs) or '(none)'}\n\n"
+                f"COMMAND OUTPUTS (TRUNCATED):\n{truncate_output(command_outputs, max_chars=3000) or ''}\n\n"
                 + (f"REPO FILE STRUCTURE (Names Only):\n{repo_file_tree}" if repo_file_tree else "")
             )
             
@@ -1970,6 +2589,16 @@ def main():
             
             if not coach_response:
                 log_print(f"[Coach] No response.", verbose=args.verbose, quiet=args.quiet)
+                feedback = "Coach produced no response. Proceeding with caution."
+                skipped_without_coach = 0
+                if turn == max_turns:
+                    log_print("Max turns reached.", verbose=args.verbose, quiet=args.quiet)
+                    run_log.report(
+                        status="partial",
+                        message=f"Max turns ({max_turns}) reached without full approval."
+                    )
+                    break
+                turn += 1
                 continue
 
             coach_data = extract_json(
@@ -1978,7 +2607,38 @@ def main():
             
             if not coach_data:
                 log_print(f"[Coach] Invalid JSON output.", verbose=args.verbose, quiet=args.quiet)
-                feedback = "Coach failed to review. Proceeding with caution."
+                # Attempt a single in-turn repair to avoid wasting a Coach call.
+                repair_input = (
+                    "Your previous response was NOT valid JSON.\n"
+                    "Return ONLY one fenced ```json code block with a single JSON object matching the required schema.\n"
+                    "No prose, no markdown outside the code fence, no commentary.\n\n"
+                    "PREVIOUS RESPONSE (for repair):\n"
+                    + truncate_output(coach_response, max_chars=4000)
+                )
+                repair_response = get_llm_response(
+                    coach_prompt,
+                    repair_input,
+                    model=args.coach_model,
+                    run_log=run_log,
+                    turn_number=turn,
+                    agent="coach",
+                )
+                if repair_response:
+                    coach_data = extract_json(
+                        repair_response, run_log=run_log, turn_number=turn, agent="coach"
+                    )
+
+                if not coach_data:
+                    feedback = "Coach failed to review. Proceeding with caution."
+                skipped_without_coach = 0
+                if turn == max_turns:
+                    log_print("Max turns reached.", verbose=args.verbose, quiet=args.quiet)
+                    run_log.report(
+                        status="partial",
+                        message=f"Max turns ({max_turns}) reached without full approval."
+                    )
+                    break
+                turn += 1
                 continue
             
             coach_status = coach_data.get("status", "UNKNOWN")
@@ -2016,13 +2676,18 @@ def main():
                 break
                 
             feedback = coach_feedback
-            
+
+            skipped_without_coach = 0
+
             if turn == max_turns:
                 log_print("Max turns reached.", verbose=args.verbose, quiet=args.quiet)
                 run_log.report(
                     status="partial",
                     message=f"Max turns ({max_turns}) reached without full approval."
                 )
+                break
+
+            turn += 1
 
     except KeyboardInterrupt:
         log_print("Loop interrupted by user.", verbose=args.verbose, quiet=False)
