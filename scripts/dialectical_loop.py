@@ -283,6 +283,15 @@ def save_file(path, content):
     with open(path, "w", encoding="utf-8") as f:
         f.write(content)
 
+
+def safe_save_file(path, content):
+    """Write a file and return (ok, error_message)."""
+    try:
+        save_file(path, content)
+        return True, ""
+    except Exception as e:
+        return False, f"save_file failed for '{path}': {e}"
+
 def _looks_like_unix_command(command: str) -> bool:
     cmd = (command or "").lstrip()
     if not cmd:
@@ -1009,7 +1018,20 @@ def run_architect_phase(
                     action="spec_generation", result="failed", error="Empty specification"
                 )
             return None
-        save_file(spec_file, response)
+        ok, err = safe_save_file(spec_file, response)
+        if not ok:
+            log_print(f"[Architect] {err}", verbose=verbose, quiet=quiet)
+            if run_log:
+                run_log.log_event(
+                    turn_number=0,
+                    phase="architect",
+                    agent="architect",
+                    model=model,
+                    action="write_spec",
+                    result="error",
+                    error=err,
+                )
+            return None
         log_print(f"Generated {spec_file}", verbose=verbose, quiet=quiet)
         if run_log:
             run_log.log_event(
@@ -1522,15 +1544,42 @@ def main():
 
             # Apply Edits
             files_changed = []
+            file_write_errors = []
             if "files" in player_data:
                 for path, content in player_data["files"].items():
-                    save_file(path, content)
-                    files_changed.append(path)
+                    ok, err = safe_save_file(path, content)
+                    if ok:
+                        files_changed.append(path)
+                    else:
+                        file_write_errors.append(err)
                 log_print(
                     f"[Player] Applied {len(files_changed)} edits.",
                     verbose=args.verbose,
                     quiet=args.quiet
                 )
+
+            if file_write_errors:
+                log_print(
+                    f"[Player] File write errors: {len(file_write_errors)}",
+                    verbose=args.verbose,
+                    quiet=args.quiet,
+                )
+                feedback = (
+                    "CRITICAL ERROR: The orchestrator failed to write one or more files. "
+                    "This is an environment/permissions issue, not a code issue.\n\n"
+                    "WRITE ERRORS:\n" + "\n".join(f"- {e}" for e in file_write_errors)
+                )
+                run_log.log_event(
+                    turn_number=turn,
+                    phase="loop",
+                    agent="system",
+                    model="orchestrator",
+                    action="write_files",
+                    result="error",
+                    error="\n".join(file_write_errors)[:1000],
+                )
+                # Skip Coach review: cannot proceed without successful writes.
+                continue
             
             # Auto-Fix (if enabled)
             if args.auto_fix and files_changed:
