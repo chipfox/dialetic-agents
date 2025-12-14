@@ -188,3 +188,39 @@ The `--player-model` / `--coach-model` / `--architect-model` flags are currently
 - `scripts/dialectical_loop.py` — orchestrator
 - `agents/*.md` — prompts for Architect/Player/Coach (and other roles, if you expand later)
 - `REQUIREMENTS.example.md` — example task file (not used by the loop unless you copy it)
+
+## Troubleshooting: File write / permission issues (Windows)
+
+If the Player agent or orchestrator reports file write failures, it is often due to OS-level protections on Windows. Common causes:
+
+- Controlled Folder Access (Windows Security > Ransomware protection) blocking Python or Node from writing to synced folders.
+- Repo located under OneDrive / Desktop / Documents which may have special protection or sync locks.
+- Files or directories marked read-only or owned by another user.
+
+Quick checks and mitigations:
+
+1. Run the built-in write diagnostics:
+
+```powershell
+python scripts\dialectical_loop.py --check-writes
+```
+
+This prints a short probe including current user, parent directory mode, and a "quick write probe" result.
+
+1. Check whether your repo is under OneDrive or a synced folder:
+
+```powershell
+echo $env:OneDrive
+echo $env:OneDriveConsumer
+(Get-Item -Path .).FullName
+```
+
+1. Inspect ACLs if needed:
+
+```powershell
+icacls .\
+```
+
+1. If Controlled Folder Access is blocking writes, either allow-list `python.exe` and `node.exe` in Ransomware protection or move the repo to a non-protected path (e.g., `C:\dev\YourRepo`).
+
+If the diagnostics output indicates a `PermissionError` during the quick write probe, capture the output and open an issue including that text so we can help further.
