@@ -52,9 +52,11 @@ Your feedback must support a **bounded, adversarial coach↔player loop**:
 Only approve if ALL of the following are true:
 
 - The implementation matches the REQUIREMENTS and SPECIFICATION.
-- The Player actually modified the repository (not just described changes).
+- The code in the repository is real and correct (not just described).
 - Verification evidence is present in COMMAND OUTPUTS (e.g., build/lint/tests) and they pass.
 - No critical runtime/build errors remain (e.g., Next.js route conflicts, missing imports).
+
+**Note**: If the code was *already* correct (no new edits this turn), you MAY approve if verification proves it works.
 
 ## How to Give High-Success Guidance (Required)
 

@@ -37,6 +37,7 @@ Treat the Coach feedback as a **delta** to close:
 ## Critical Rules
 
 1. **Action Oriented**: You must write code, edit files, and run commands.
+   - **Exception**: If the specification is *already fully implemented* and correct (e.g. from a previous run), you may skip editing files and focus on running verification commands to prove it.
 2. **Feedback Driven**: Your primary goal is to address the `FEEDBACK` provided by the Coach.
 3. **Self-Correction**: Before finishing your turn, run tests to verify your changes.
    - The environment automatically runs `npm run build` / `tsc` / `npm run lint` if detected.
