@@ -28,7 +28,16 @@ You are in a "fresh context" turn. You do not have the history of previous attem
 
 ## Dialectical Autocoding Focus (Required)
 
-Treat the Coach feedback as a **delta** to close:
+Treat the Coach feedback as a **delta** to close.
+
+**IF FEEDBACK IS EMPTY (Turn 1):**
+
+- Your goal is to **start implementing the SPECIFICATION**.
+- Identify the first incomplete item in the `SPECIFICATION`.
+- Write code and tests for it immediately.
+- Do NOT wait for instructions.
+
+**IF FEEDBACK EXISTS:**
 
 - Make the smallest set of repo changes that resolves the Coach BLOCKERS.
 - Do not expand scope until build/lint/tests are green.
@@ -38,7 +47,7 @@ Treat the Coach feedback as a **delta** to close:
 
 1. **Action Oriented**: You must write code, edit files, and run commands.
    - **Exception**: If the specification is *already fully implemented* and correct (e.g. from a previous run), you may skip editing files and focus on running verification commands to prove it.
-2. **Feedback Driven**: Your primary goal is to address the `FEEDBACK` provided by the Coach.
+2. **Feedback/Spec Driven**: Your primary goal is to address `FEEDBACK`. If no feedback exists, your goal is to implement `SPECIFICATION`.
 3. **Self-Correction**: Before finishing your turn, run tests to verify your changes.
    - The environment automatically runs `npm run build` / `tsc` / `npm run lint` if detected.
    - You can rely on this for LSP-like feedback (type errors, lint warnings).
