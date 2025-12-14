@@ -7,12 +7,14 @@ This guide documents how the dialectical-loop skill remains resilient to VSCode 
 ## Problem Statement
 
 VSCode can automatically apply formatting via:
+
 - **Black** (Python code formatter)
 - **Prettier** (Markdown/JSON formatter)
 - **pylint/flake8** (Python linters)
 - **Various other extensions** (markdownlint, etc.)
 
 These tools can change:
+
 - Line breaks and indentation
 - Import order
 - Whitespace and spacing
@@ -29,6 +31,7 @@ These tools can change:
 ### 1. Import Organization
 
 **Safe Pattern:** Follow PEP 8 import ordering
+
 ```python
 # Standard library imports (first)
 import os
@@ -45,12 +48,14 @@ from datetime import datetime, timezone
 ```
 
 **Why It's Safe:**
+
 - Black/isort will reorder but preserve semantic meaning
 - No circular dependencies possible
 - Clear separation allows linters to reorganize without breaking logic
 - Each import group can safely be reorganized
 
 **Unsafe Pattern:**
+
 ```python
 # AVOID: Relative imports mixed with absolute
 from ..agents import coach
@@ -64,6 +69,7 @@ import os, sys, json  # Will be reformatted
 ### 2. Line Length Compliance
 
 **Safe Pattern:** Keep lines under 100 characters
+
 ```python
 # Good: Line is 98 characters
 coach_input = f"REQUIREMENTS:\n{requirements}\n\nSPECIFICATION:\n{specification}"
@@ -76,11 +82,13 @@ coach_input = (
 ```
 
 **Why It's Safe:**
+
 - Black will preserve intentional line breaks
 - Under 100 chars means no forced reformatting
 - Multi-line f-strings and concatenation survive formatting
 
 **Unsafe Pattern:**
+
 ```python
 # BAD: 127 characters - will be forcibly reformatted
 coach_input = f"REQUIREMENTS:\n{requirements}\n\nSPECIFICATION:\n{specification}\n\nPLAYER OUTPUT:\n{json.dumps(player_data, indent=2)}"
@@ -89,6 +97,7 @@ coach_input = f"REQUIREMENTS:\n{requirements}\n\nSPECIFICATION:\n{specification}
 ### 3. Function Signatures
 
 **Safe Pattern:** Clear, well-structured signatures
+
 ```python
 def extract_json(text, run_log=None, turn_number=0, agent="unknown"):
     """Extract JSON from text with linting resilience."""
@@ -96,11 +105,13 @@ def extract_json(text, run_log=None, turn_number=0, agent="unknown"):
 ```
 
 **Why It's Safe:**
+
 - Clear parameter list survives reformatting
 - No complex defaults that might be reordered
 - Consistent with Black formatting
 
 **Unsafe Pattern:**
+
 ```python
 # AVOID: Line continuation in signature - may be reformatted
 def extract_json(text, run_log=None, turn_number=0, agent="unknown", validate_structure=True,\
@@ -110,6 +121,7 @@ def extract_json(text, run_log=None, turn_number=0, agent="unknown", validate_st
 ### 4. Dictionary and List Structures
 
 **Safe Pattern:** Multi-line with consistent formatting
+
 ```python
 event = {
     "turn_number": turn_number,
@@ -124,11 +136,13 @@ event = {"turn_number": turn_number, "phase": phase, "agent": agent}
 ```
 
 **Why It's Safe:**
+
 - Black will normalize spacing but preserve structure
 - Each item on separate line survives reformatting
 - Trailing commas are idiomatic and preserved
 
 **Unsafe Pattern:**
+
 ```python
 # AVOID: Inconsistent formatting
 event = {"turn_number": turn_number, "phase":
@@ -139,6 +153,7 @@ event = {"turn_number": turn_number, "phase":
 ### 5. String Formatting
 
 **Safe Pattern:** Use f-strings with clear structure
+
 ```python
 message = f"[{timestamp}] {message}"
 
@@ -151,11 +166,13 @@ full_message = (
 ```
 
 **Why It's Safe:**
+
 - f-strings are Black-preferred
 - Clear line breaks aren't reordered
 - No complex escaping that might be changed
 
 **Unsafe Pattern:**
+
 ```python
 # AVOID: Complex string with poor structure
 message = f"[{timestamp}] {message} - " + \
@@ -166,6 +183,7 @@ message = f"[{timestamp}] {message} - " + \
 ### 6. Comments and Documentation
 
 **Safe Pattern:** Clear, concise comments
+
 ```python
 def log_print(message, verbose=False, quiet=False):
     """Print to stderr unless quiet is True. Verbose adds extra details."""
@@ -177,11 +195,13 @@ def log_print(message, verbose=False, quiet=False):
 ```
 
 **Why It's Safe:**
+
 - Black won't reflow single-line comments
 - Docstrings are preserved exactly
 - Clear structure survives reformatting
 
 **Unsafe Pattern:**
+
 ```python
 # AVOID: Comments with special characters that might be reformatted
 # ========================================
@@ -192,6 +212,7 @@ def log_print(message, verbose=False, quiet=False):
 ### 7. JSON Serialization
 
 **Safe Pattern:** Consistent, explicit formatting
+
 ```python
 # Use consistent indent for JSON logs
 json_output = json.dumps(data, indent=2)
@@ -203,11 +224,13 @@ event = {
 ```
 
 **Why It's Safe:**
+
 - `json.dumps(indent=2)` produces consistent output
 - No post-formatting changes the JSON structure
 - Data integrity is mathematically guaranteed
 
 **Unsafe Pattern:**
+
 ```python
 # AVOID: Relying on custom formatting
 json_output = json.dumps(data)  # Single-line might be reformatted
@@ -236,6 +259,7 @@ def example():
 ```
 
 Tables, links, and other structures.
+
 ```
 
 **Why It's Safe:**
@@ -254,6 +278,7 @@ No language specified
 ```
 
 No blank lines around code blocks
+
 ```
 
 ## Implementation: Linting Resilience Module
@@ -269,6 +294,7 @@ python scripts/linting_resilience.py *.py *.md *.json
 ```
 
 **Checks Performed:**
+
 1. **AST Preservation (Python)** - Semantic meaning unchanged
 2. **Import Order (Python)** - PEP 8 compliant
 3. **Line Lengths (Python)** - Under 100 characters
@@ -328,9 +354,11 @@ python scripts/linting_resilience.py scripts/dialectical_loop.py || exit 1
 1. Make a code change in `dialectical_loop.py`
 2. Save the file in VSCode (triggers linting)
 3. Run resilience check:
+
    ```bash
    python scripts/linting_resilience.py scripts/dialectical_loop.py
    ```
+
 4. Verify output shows "✓ Yes"
 
 ### Automated Test
@@ -356,6 +384,7 @@ with tempfile.NamedTemporaryFile(suffix=".py") as tmp:
 **Cause:** Semantic change during formatting (critical!)
 
 **Solution:**
+
 1. Review the exact changes made
 2. Restore original code
 3. Check against patterns in this guide
@@ -366,6 +395,7 @@ with tempfile.NamedTemporaryFile(suffix=".py") as tmp:
 **Cause:** Lines over 100 characters
 
 **Solution:**
+
 ```python
 # Break into multiple lines
 long_variable = (
@@ -380,6 +410,7 @@ long_variable = (
 **Cause:** Imports not in PEP 8 order
 
 **Solution:**
+
 ```python
 # Reorder: stdlib first, then third-party, then local
 import os

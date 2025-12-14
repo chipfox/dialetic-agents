@@ -80,7 +80,9 @@ class RunLog:
         coach_calls = [t for t in self.turns if t.get("agent") == "coach"]
         
         return {
-            "total_turns_executed": len(set(t.get("turn_number") for t in self.turns if t.get("phase") == "loop")),
+            "total_turns_executed": len(set(
+                t.get("turn_number") for t in self.turns if t.get("phase") == "loop"
+            )),
             "total_tokens_estimated": self.total_tokens_estimate(),
             "architect_calls": {
                 "successful": len([t for t in architect_calls if t["outcome"] == "success"]),
@@ -140,7 +142,11 @@ class RunLog:
             print(f"Total tokens (estimated): {total_tokens:,}", file=sys.stderr)
             print(f"Architect: {arch_ok} successful, {arch_fail} failed", file=sys.stderr)
             print(f"Player: {player_ok} successful, {player_fail} failed", file=sys.stderr)
-            print(f"Coach: {coach_approved} approved, {coach_rejected} rejected, {coach_errors} errors", file=sys.stderr)
+            print(
+                f"Coach: {coach_approved} approved, {coach_rejected} rejected, "
+                f"{coach_errors} errors",
+                file=sys.stderr
+            )
             if message:
                 print(f"Message: {message}", file=sys.stderr)
             print("=" * 70, file=sys.stderr)
@@ -171,7 +177,10 @@ def save_file(path, content):
 def run_command(command):
     try:
         result = subprocess.run(command, shell=True, capture_output=True, text=True)
-        return f"Command: {command}\nExit Code: {result.returncode}\nOutput:\n{result.stdout}\nError:\n{result.stderr}"
+        return (
+            f"Command: {command}\nExit Code: {result.returncode}\n"
+            f"Output:\n{result.stdout}\nError:\n{result.stderr}"
+        )
     except Exception as e:
         return f"Error running command {command}: {e}"
 
@@ -183,7 +192,14 @@ def get_github_token():
         print(f"Error getting GitHub token: {e}")
         return None
 
-def get_llm_response(system_prompt, user_prompt, model="claude-sonnet-4.5", run_log=None, turn_number=0, agent="unknown"):
+def get_llm_response(
+    system_prompt,
+    user_prompt,
+    model="claude-sonnet-4.5",
+    run_log=None,
+    turn_number=0,
+    agent="unknown"
+):
     """Call Copilot with observability logging."""
     token = os.environ.get("GITHUB_TOKEN") or get_github_token()
     if not token:
@@ -363,19 +379,46 @@ def extract_json(text, run_log=None, turn_number=0, agent="unknown"):
         )
     return None
 
-def run_architect_phase(requirements, current_files, requirements_file, spec_file, architect_model, run_log=None, verbose=False, quiet=False):
+def run_architect_phase(
+    requirements,
+    current_files,
+    requirements_file,
+    spec_file,
+    architect_model,
+    run_log=None,
+    verbose=False,
+    quiet=False
+):
     log_print(f"Architect is analyzing requirements...", verbose=verbose, quiet=quiet)
     architect_prompt = load_file(str(AGENT_DIR / "architect.md"))
     if not architect_prompt.strip():
         print(f"Error: Missing architect prompt at {AGENT_DIR / 'architect.md'}")
         return None
     
-    architect_input = f"REQUIREMENTS FILE: {requirements_file}\nREQUIREMENTS:\n{requirements}\n\nCURRENT CODEBASE:\n{current_files}\n\n"
-    architect_input += f"TASK: Create a detailed technical specification ({spec_file}) for the implementation. "
-    architect_input += "Include file paths, data structures, function signatures, and step-by-step implementation plan. "
-    architect_input += "Output ONLY the markdown content of the specification file. Do not wrap it in JSON."
+    architect_input = (
+        f"REQUIREMENTS FILE: {requirements_file}\nREQUIREMENTS:\n{requirements}\n\n"
+        f"CURRENT CODEBASE:\n{current_files}\n\n"
+    )
+    architect_input += (
+        f"TASK: Create a detailed technical specification ({spec_file}) for the implementation. "
+    )
+    architect_input += (
+        "Include file paths, data structures, function signatures, "
+        "and step-by-step implementation plan. "
+    )
+    architect_input += (
+        "Output ONLY the markdown content of the specification file. "
+        "Do not wrap it in JSON."
+    )
 
-    response = get_llm_response(architect_prompt, architect_input, model=architect_model, run_log=run_log, turn_number=0, agent="architect")
+    response = get_llm_response(
+        architect_prompt,
+        architect_input,
+        model=architect_model,
+        run_log=run_log,
+        turn_number=0,
+        agent="architect"
+    )
     
     if response:
         response = strip_fenced_block(response)
@@ -406,16 +449,46 @@ def run_architect_phase(requirements, current_files, requirements_file, spec_fil
         return None
 
 def main():
-    parser = argparse.ArgumentParser(description="Run the Dialectical Autocoding Loop with built-in observability.")
-    parser.add_argument("--max-turns", type=int, default=MAX_TURNS, help="Maximum number of turns to run.")
-    parser.add_argument("--requirements-file", default=REQUIREMENTS_FILE, help="Path to requirements markdown file.")
-    parser.add_argument("--spec-file", default=SPECIFICATION_FILE, help="Path to specification markdown file.")
-    parser.add_argument("--skip-architect", action="store_true", help="Skip architect phase even if specification is missing.")
-    parser.add_argument("--coach-model", default=DEFAULT_COACH_MODEL, help="Model to use for Coach reviews.")
-    parser.add_argument("--player-model", default=DEFAULT_PLAYER_MODEL, help="Model to use for Player implementation.")
-    parser.add_argument("--architect-model", default=DEFAULT_ARCHITECT_MODEL, help="Model to use for Architect planning.")
-    parser.add_argument("--verbose", action="store_true", help="Enable verbose output (details on prompts, responses, state).")
-    parser.add_argument("--quiet", action="store_true", help="Suppress all terminal output except final summary and log path.")
+    parser = argparse.ArgumentParser(
+        description="Run the Dialectical Autocoding Loop with built-in observability."
+    )
+    parser.add_argument(
+        "--max-turns", type=int, default=MAX_TURNS, help="Maximum number of turns to run."
+    )
+    parser.add_argument(
+        "--requirements-file", default=REQUIREMENTS_FILE, help="Path to requirements markdown file."
+    )
+    parser.add_argument(
+        "--spec-file", default=SPECIFICATION_FILE, help="Path to specification markdown file."
+    )
+    parser.add_argument(
+        "--skip-architect",
+        action="store_true",
+        help="Skip architect phase even if specification is missing."
+    )
+    parser.add_argument(
+        "--coach-model", default=DEFAULT_COACH_MODEL, help="Model to use for Coach reviews."
+    )
+    parser.add_argument(
+        "--player-model",
+        default=DEFAULT_PLAYER_MODEL,
+        help="Model to use for Player implementation."
+    )
+    parser.add_argument(
+        "--architect-model",
+        default=DEFAULT_ARCHITECT_MODEL,
+        help="Model to use for Architect planning."
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable verbose output (details on prompts, responses, state)."
+    )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress all terminal output except final summary and log path."
+    )
     args = parser.parse_args()
     
     max_turns = args.max_turns
@@ -425,8 +498,12 @@ def main():
 
     # Initialize observability
     run_log = RunLog(verbose=args.verbose, quiet=args.quiet)
-    log_print(f"Starting Dialectical Autocoding Loop (max_turns={max_turns}, verbose={args.verbose}, quiet={args.quiet})", 
-              verbose=args.verbose, quiet=args.quiet)
+    log_print(
+        f"Starting Dialectical Autocoding Loop (max_turns={max_turns}, "
+        f"verbose={args.verbose}, quiet={args.quiet})", 
+        verbose=args.verbose,
+        quiet=args.quiet
+    )
 
     requirements_file = args.requirements_file
     spec_file = args.spec_file
@@ -436,7 +513,10 @@ def main():
         specification = load_file(spec_file)
 
         if not requirements.strip() and not specification.strip():
-            error_msg = f"Error: Neither {requirements_file} nor {spec_file} found. Create one of them to proceed."
+            error_msg = (
+                f"Error: Neither {requirements_file} nor {spec_file} found. "
+                "Create one of them to proceed."
+            )
             print(error_msg)
             log_print(error_msg, verbose=args.verbose, quiet=args.quiet)
             run_log.report(status="failed", message=error_msg)
@@ -463,7 +543,10 @@ def main():
                 log_print(f"Observability log: {log_path}", verbose=args.verbose, quiet=args.quiet)
                 return
             if not requirements.strip():
-                error_msg = f"Error: {spec_file} is missing and requirements are empty; cannot generate specification."
+                error_msg = (
+                    f"Error: {spec_file} is missing and requirements are empty; "
+                    "cannot generate specification."
+                )
                 print(error_msg)
                 log_print(error_msg, verbose=args.verbose, quiet=args.quiet)
                 run_log.report(status="failed", message=error_msg)
@@ -509,7 +592,10 @@ def main():
             
             # --- Player Turn ---
             log_print(f"[Player] Implementing...", verbose=args.verbose, quiet=args.quiet)
-            player_input = f"REQUIREMENTS:\n{requirements}\n\nSPECIFICATION:\n{specification}\n\nFEEDBACK FROM PREVIOUS TURN:\n{feedback}"
+            player_input = (
+                f"REQUIREMENTS:\n{requirements}\n\nSPECIFICATION:\n{specification}\n\n"
+                f"FEEDBACK FROM PREVIOUS TURN:\n{feedback}"
+            )
             
             # Add current file context
             current_files = ""
@@ -524,23 +610,37 @@ def main():
                 player_input += f"\n\nCURRENT CODEBASE:\n{current_files}"
 
             # Player
-            player_response = get_llm_response(player_prompt, player_input, model=args.player_model, 
-                                               run_log=run_log, turn_number=turn, agent="player")
+            player_response = get_llm_response(
+                player_prompt,
+                player_input,
+                model=args.player_model, 
+                run_log=run_log,
+                turn_number=turn,
+                agent="player"
+            )
             
             if not player_response:
                 log_print(f"[Player] No response.", verbose=args.verbose, quiet=args.quiet)
                 continue
 
-            player_data = extract_json(player_response, run_log=run_log, turn_number=turn, agent="player")
+            player_data = extract_json(
+                player_response, run_log=run_log, turn_number=turn, agent="player"
+            )
             
             if not player_data:
                 log_print(f"[Player] Invalid JSON output.", verbose=args.verbose, quiet=args.quiet)
-                feedback = "Your last response was not valid JSON. Response must be a valid JSON object. Please follow the format strictly and wrap output in {...} braces."
+                feedback = (
+                    "Your last response was not valid JSON. Response must be a valid JSON object. "
+                    "Please follow the format strictly and wrap output in {...} braces."
+                )
                 continue
             
             if args.verbose:
-                log_print(f"[Player] Thought: {player_data.get('thought_process', 'N/A')[:100]}...", 
-                         verbose=True, quiet=args.quiet)
+                log_print(
+                    f"[Player] Thought: {player_data.get('thought_process', 'N/A')[:100]}...", 
+                    verbose=True,
+                    quiet=args.quiet
+                )
             
             # Apply Edits
             files_changed = []
@@ -548,7 +648,11 @@ def main():
                 for path, content in player_data["files"].items():
                     save_file(path, content)
                     files_changed.append(path)
-                log_print(f"[Player] Applied {len(files_changed)} edits.", verbose=args.verbose, quiet=args.quiet)
+                log_print(
+                    f"[Player] Applied {len(files_changed)} edits.",
+                    verbose=args.verbose,
+                    quiet=args.quiet
+                )
             
             # Run Commands
             command_outputs = ""
@@ -556,8 +660,11 @@ def main():
                 for cmd in player_data["commands_to_run"]:
                     output = run_command(cmd)
                     command_outputs += output + "\n"
-                log_print(f"[Player] Executed {len(player_data['commands_to_run'])} commands.", 
-                         verbose=args.verbose, quiet=args.quiet)
+                log_print(
+                    f"[Player] Executed {len(player_data['commands_to_run'])} commands.", 
+                    verbose=args.verbose,
+                    quiet=args.quiet
+                )
 
             # Log Player action
             run_log.log_event(
@@ -575,7 +682,11 @@ def main():
 
             # --- Coach Turn ---
             log_print(f"[Coach] Reviewing...", verbose=args.verbose, quiet=args.quiet)
-            coach_input = f"REQUIREMENTS:\n{requirements}\n\nSPECIFICATION:\n{specification}\n\nPLAYER OUTPUT:\n{json.dumps(player_data, indent=2)}\n\nCOMMAND OUTPUTS:\n{command_outputs}"
+            coach_input = (
+                f"REQUIREMENTS:\n{requirements}\n\nSPECIFICATION:\n{specification}\n\n"
+                f"PLAYER OUTPUT:\n{json.dumps(player_data, indent=2)}\n\n"
+                f"COMMAND OUTPUTS:\n{command_outputs}"
+            )
             
             # Add file context for Coach
             current_files_new = ""
@@ -588,14 +699,22 @@ def main():
             coach_input += f"\n\nUPDATED CODEBASE:\n{current_files_new}"
 
             # Coach
-            coach_response = get_llm_response(coach_prompt, coach_input, model=args.coach_model,
-                                              run_log=run_log, turn_number=turn, agent="coach")
+            coach_response = get_llm_response(
+                coach_prompt,
+                coach_input,
+                model=args.coach_model,
+                run_log=run_log,
+                turn_number=turn,
+                agent="coach"
+            )
             
             if not coach_response:
                 log_print(f"[Coach] No response.", verbose=args.verbose, quiet=args.quiet)
                 continue
 
-            coach_data = extract_json(coach_response, run_log=run_log, turn_number=turn, agent="coach")
+            coach_data = extract_json(
+                coach_response, run_log=run_log, turn_number=turn, agent="coach"
+            )
             
             if not coach_data:
                 log_print(f"[Coach] Invalid JSON output.", verbose=args.verbose, quiet=args.quiet)
@@ -607,7 +726,9 @@ def main():
             log_print(f"[Coach] Status: {coach_status}", verbose=args.verbose, quiet=args.quiet)
             if args.verbose:
                 # Log first 200 chars of feedback in verbose mode
-                fb_preview = coach_feedback[:200] + "..." if len(coach_feedback) > 200 else coach_feedback
+                fb_preview = (
+                    coach_feedback[:200] + "..." if len(coach_feedback) > 200 else coach_feedback
+                )
                 log_print(f"[Coach] Feedback: {fb_preview}", verbose=True, quiet=args.quiet)
 
             # Log Coach decision with full feedback for debugging
@@ -626,7 +747,11 @@ def main():
             )
             
             if coach_status == "APPROVED":
-                log_print("SUCCESS! Coach approved the implementation.", verbose=args.verbose, quiet=args.quiet)
+                log_print(
+                    "SUCCESS! Coach approved the implementation.",
+                    verbose=args.verbose,
+                    quiet=args.quiet
+                )
                 run_log.report(status="success", message="Coach approved implementation.")
                 break
                 
@@ -634,7 +759,10 @@ def main():
             
             if turn == max_turns:
                 log_print("Max turns reached.", verbose=args.verbose, quiet=args.quiet)
-                run_log.report(status="partial", message=f"Max turns ({max_turns}) reached without full approval.")
+                run_log.report(
+                    status="partial",
+                    message=f"Max turns ({max_turns}) reached without full approval."
+                )
 
     except KeyboardInterrupt:
         log_print("Loop interrupted by user.", verbose=args.verbose, quiet=False)
