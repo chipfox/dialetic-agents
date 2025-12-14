@@ -1441,10 +1441,34 @@ def main():
 
             # --- Player Turn ---
             log_print(f"[Player] ({args.player_model}) Implementing...", verbose=args.verbose, quiet=args.quiet)
+
+            feedback_for_player = (feedback or "").strip()
+            if not feedback_for_player:
+                if turn == 1:
+                    feedback_for_player = (
+                        "NONE (Turn 1 baseline). You MUST take action: implement Turn 1 items from SPECIFICATION "
+                        "and/or run verification commands. If you make no edits, you MUST still run verification."
+                    )
+                else:
+                    feedback_for_player = "NONE"
+
+            baseline_verify_cmds = []
+            if auto_verify:
+                try:
+                    baseline_verify_cmds = detect_verification_commands(".")
+                except Exception:
+                    baseline_verify_cmds = []
+
             player_input = (
                 f"REQUIREMENTS:\n{requirements}\n\nSPECIFICATION:\n{specification}\n\n"
-                f"FEEDBACK FROM PREVIOUS TURN:\n{feedback}"
+                f"FEEDBACK FROM PREVIOUS TURN:\n{feedback_for_player}"
             )
+
+            if baseline_verify_cmds:
+                player_input += (
+                    "\n\nVERIFICATION COMMANDS AVAILABLE (pick at least one):\n"
+                    + "\n".join(f"- {c}" for c in baseline_verify_cmds)
+                )
             
             context_mode = args.context_mode
             if context_mode == "auto" and turn > 1:
@@ -1613,15 +1637,18 @@ def main():
                             )
 
             # Check for "Lazy Player" (claims success but no edits)
-            if not files_changed and not file_ops_applied and not player_data.get("commands_to_run"):
+            lazy_turn = (not files_changed and not file_ops_applied and not player_data.get("commands_to_run"))
+            if lazy_turn:
                 log_print("[Player] No actions taken (lazy turn).", verbose=args.verbose, quiet=args.quiet)
-                feedback = (
-                    "CRITICAL ERROR: You did not perform any actions (no files edited, no file_ops, no commands). "
-                    "You MUST modify the codebase to address the feedback. "
-                    "If you think no changes are needed, you must explain why in 'thought_process' and run a verification command."
-                )
-                # Skip Coach review to save tokens/time since nothing changed
-                continue
+                # Do not burn a whole turn. If we can auto-verify, do it anyway and let Fast-Fail/Coach decide.
+                if not auto_verify and not args.verify_cmd:
+                    feedback = (
+                        "CRITICAL ERROR: You did not perform any actions (no files edited, no file_ops, no commands). "
+                        "You MUST modify the codebase to address the feedback. "
+                        "If you think no changes are needed, you must explain why in 'thought_process' and run a verification command."
+                    )
+                    # Skip Coach review to save tokens/time since nothing changed
+                    continue
             
             # Run Commands
             command_outputs = ""
