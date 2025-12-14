@@ -50,6 +50,14 @@ Aim to reach approval in **≤ 5 turns**.
 Each turn must produce verifiable progress and eliminate at least one Coach
 blocker (prefer build/lint blockers first).
 
+## Specification Maintenance (Token Saving)
+
+As you complete tasks, you **SHOULD** update `SPECIFICATION.md` to reflect progress:
+
+- Mark completed items as `[DONE]`.
+- **Remove detailed instructions** for fully completed and verified features to save context window space. Keep only a high-level summary of what was done.
+- This prevents re-reading the same specs every turn and saves tokens.
+
 ## Input Context
 
 You will be provided with:

@@ -47,6 +47,12 @@ Your feedback must support a **bounded, adversarial coach↔player loop**:
 3. **No Hand-holding**: Do not fix the code. Point out *what* is wrong, not just *how* to fix it.
 4. **Verify**: If possible, ask to run tests or linters to back up your critique.
 
+## Specification Updates
+
+- **Allow** the Player to update `SPECIFICATION.md` to mark items as `[DONE]` or remove details of completed tasks.
+- **Verify** that any removed spec items are indeed fully implemented and verified before approving the removal.
+- This is a valid token-saving strategy.
+
 ## Approval Gate
 
 Only approve if ALL of the following are true:

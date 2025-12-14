@@ -1251,6 +1251,10 @@ def main():
         for turn in range(1, max_turns + 1):
             log_print(f"Turn {turn}/{max_turns}", verbose=args.verbose, quiet=args.quiet)
             
+            # Reload specs/requirements to capture any updates (e.g. Player marking items DONE)
+            requirements = load_file(requirements_file)
+            specification = load_file(spec_file)
+
             # --- Player Turn ---
             log_print(f"[Player] Implementing...", verbose=args.verbose, quiet=args.quiet)
             player_input = (
