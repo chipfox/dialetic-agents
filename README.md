@@ -97,8 +97,6 @@ Cost: ~79 units (2.1x Tier 1). Use for mission-critical systems; Opus 4.5 is Pre
 - **Player** focuses on code generation; Haiku is fast & cheap for most code tasks
 - **Coach** must be a credible critic; keep it strong (reason parity with Architect)
 
-See [copilot-models.md](copilot-models.md) for full model comparison.
-
 ## Observability: Know What Your Loop Is Doing
 
 This skill includes **built-in observability** to prevent token waste and give you confidence the loop is functioning correctly.
