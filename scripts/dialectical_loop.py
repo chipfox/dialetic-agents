@@ -204,6 +204,10 @@ class RunLog:
             json.dump(self.to_json(), f, indent=2)
         return str(log_path)
 
+    def tailable_log_path(self, directory="."):
+        """Return the log path (string) so callers can show how to watch it."""
+        return str(Path(directory) / f"{self.run_id}.json")
+
     def report(self, status="unknown", message=""):
         """Print a human-readable summary report."""
         summary = self.get_summary()
@@ -910,6 +914,20 @@ def main():
         verbose=args.verbose,
         quiet=args.quiet
     )
+
+    # Show user where the observability log will be written and how to tail it
+    log_path_preview = run_log.tailable_log_path()
+    log_print(
+        f"Observability log will be written to: {log_path_preview}",
+        verbose=True,
+        quiet=args.quiet,
+    )
+    if not args.quiet:
+        log_print(
+            "To watch updates as the run proceeds: powershell -Command \"Get-Content -Path '" + log_path_preview + "' -Wait\"",
+            verbose=False,
+            quiet=args.quiet,
+        )
 
     requirements_file = args.requirements_file
     spec_file = args.spec_file
