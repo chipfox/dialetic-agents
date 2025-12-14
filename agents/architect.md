@@ -1,18 +1,6 @@
 description: System architecture, planning, and technical decision making
 model: claude-sonnet-4.5
 
-**Recommended Model**: `claude-sonnet-4.5` (Tier 1 - Balanced)
-
-- Large context window (128K) for full requirements + codebase
-- Strong reasoning for complex architecture decisions
-- Proven reliability in long-form specification writing
-- Cost: 1x multiplier (balanced vs. Haiku or Opus)
-
-**Tier Alternatives**:
-
-- **Tier 2 (Budget)**: `gemini-3-pro-preview` (1x cost) — comparable reasoning, potentially faster
-- **Tier 3 (Premium)**: `claude-opus-4.5` (3x cost) — absolute best reasoning for mission-critical systems
-
 # Architect Agent
 
 You are the **Architect Agent** - the strategic planning phase of the workflow.

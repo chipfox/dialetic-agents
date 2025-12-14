@@ -994,9 +994,14 @@ def truncate_output(output, max_chars=2000):
     
     return f"{head}\n... [OUTPUT TRUNCATED {len(output) - max_chars} CHARS] ...\n{tail}"
 
-def get_repo_file_tree(root_dir=".", exclude_dirs=None):
-    """Get a simple list of all files in the repo to help Coach see missing files."""
+def get_repo_file_tree(root_dir=".", exclude_dirs=None, include_exts=None):
+    """Get a simple list of file paths to help Coach see missing/misreferenced files.
+
+    Note: This is intentionally names-only (no file contents) to keep token usage low.
+    """
     exclude_dirs = exclude_dirs or DEFAULT_EXCLUDE_DIRS
+    include_exts = include_exts or DEFAULT_CONTEXT_EXTS
+    include_exts = {e.lower() for e in include_exts}
     file_list = []
     
     # Try git ls-files first
@@ -1008,7 +1013,9 @@ def get_repo_file_tree(root_dir=".", exclude_dirs=None):
             for f in files:
                 parts = Path(f).parts
                 if not any(_should_exclude_dir(p, exclude_dirs) for p in parts):
-                    file_list.append(f)
+                    suffix = Path(f).suffix.lower()
+                    if suffix in include_exts or suffix == "":
+                        file_list.append(f)
             return "\n".join(sorted(file_list))
     except Exception:
         pass
@@ -1019,7 +1026,9 @@ def get_repo_file_tree(root_dir=".", exclude_dirs=None):
         for filename in sorted(files):
             path = Path(root) / filename
             rel_path = os.path.relpath(path, root_dir)
-            file_list.append(rel_path)
+            suffix = Path(filename).suffix.lower()
+            if suffix in include_exts or suffix == "":
+                file_list.append(rel_path)
             
     return "\n".join(sorted(file_list))
 
@@ -1527,14 +1536,17 @@ def main():
             # --- Coach Turn ---
             log_print(f"[Coach] ({args.coach_model}) Reviewing...", verbose=args.verbose, quiet=args.quiet)
             
-            # Always include full file tree so Coach knows what exists, even if content is hidden
-            repo_file_tree = get_repo_file_tree(".", exclude_dirs)
+            # Include a names-only repo file list ONLY when Coach is focusing on recent edits.
+            # This prevents token bloat when the Coach already receives a broad codebase snapshot.
+            repo_file_tree = ""
+            if args.coach_focus_recent:
+                repo_file_tree = get_repo_file_tree(".", exclude_dirs, include_exts=include_exts)
             
             coach_input = (
                 f"REQUIREMENTS:\n{requirements}\n\nSPECIFICATION:\n{specification}\n\n"
-                f"PLAYER OUTPUT:\n{json.dumps(player_data, indent=2)}\n\n"
+                f"PLAYER OUTPUT:\n{json.dumps(player_data, ensure_ascii=False, separators=(',', ':'))}\n\n"
                 f"COMMAND OUTPUTS:\n{command_outputs}\n\n"
-                f"REPO FILE STRUCTURE (Names Only):\n{repo_file_tree}"
+                + (f"REPO FILE STRUCTURE (Names Only):\n{repo_file_tree}" if repo_file_tree else "")
             )
             
             # Determine Coach context
