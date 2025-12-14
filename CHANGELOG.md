@@ -5,6 +5,21 @@ All notable changes to dialectical-loop will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.3] - 2025-12-14
+
+### Changed
+
+- **Module Extraction**: Refactored main orchestrator into focused modules
+  - `observability.py`: RunLog class and logging utilities (177 lines)
+  - `llm_client.py`: GitHub Copilot CLI interaction (320 lines)
+  - `context_builder.py`: Codebase snapshot and file operations (432 lines)
+  - Main orchestrator reduced from 2,970 → 2,325 lines (22% reduction)
+- Improved code maintainability and testability through separation of concerns
+
+### Fixed
+
+- No functional changes - purely organizational refactoring
+
 ## [1.0.2] - 2025-12-14
 
 ### Added
