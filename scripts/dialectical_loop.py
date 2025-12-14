@@ -25,8 +25,11 @@ from context_builder import (
     build_changed_files_snapshot,
     apply_file_ops,
     get_git_changed_paths,
+    _ensure_writable,
     _gather_write_diagnostics,
     _should_exclude_dir,
+    _run_capture,
+    _split_csv_arg,
     DEFAULT_CONTEXT_EXTS,
     DEFAULT_EXCLUDE_DIRS,
     DEFAULT_CONTEXT_MAX_BYTES,
@@ -733,14 +736,6 @@ def run_command(command, shell_kind="auto"):
         ), result.returncode
     except Exception as e:
         return f"Error running command {command}: {e}", 1
-
-
-def _split_csv_arg(value):
-    """Split comma-separated argument string."""
-    if not value:
-        return []
-    items = [v.strip() for v in value.split(",")]
-    return [v for v in items if v]
 
 
 def run_architect_phase(
@@ -2333,7 +2328,9 @@ def main():
                         "If the work is complete, your task is to mark it complete in the spec so we stop wasting tokens."
                     )
                     if turn == max_turns:
-                        run_log.report(status="failed", message=reason)
+                        # Reaching max turns is not a workflow failure; it means we ran out of budget
+                        # before the spec was explicitly marked complete.
+                        run_log.report(status="partial", message=reason)
                         break
                     turn += 1
                     continue
