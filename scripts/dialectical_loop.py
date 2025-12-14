@@ -1777,6 +1777,56 @@ def truncate_output(output, max_chars=2000):
     
     return f"{head}\n... [OUTPUT TRUNCATED {len(output) - max_chars} CHARS] ...\n{tail}"
 
+def extract_file_mentions(text: str) -> list:
+    """Extract file paths mentioned in text (e.g., Coach feedback).
+    
+    Returns list of unique file paths found in the text.
+    """
+    if not text:
+        return []
+    pattern = r'[\w/.-]+\.(?:ts|tsx|js|jsx|py|md|json|yaml|yml)'
+    return list(set(re.findall(pattern, text)))
+
+def extract_error_fingerprints(verification_output: str) -> set:
+    """Extract unique error signatures from TypeScript/lint verification.
+    
+    Format: 'file:line:error_code' for deterministic tracking across turns.
+    
+    Examples:
+    - TypeScript: 'app/api/route.ts:45:TS2304'
+    - ESLint: 'components/Widget.tsx:120:react-hooks/exhaustive-deps'
+    """
+    if not verification_output:
+        return set()
+    
+    errors = set()
+    
+    # TypeScript: "path/file.ts(line,col): error TSxxxx:"
+    ts_pattern = r'([\w/.-]+\.tsx?)\((\d+),\d+\): error (TS\d+):'
+    for file, line, code in re.findall(ts_pattern, verification_output):
+        errors.add(f"{file}:{line}:{code}")
+    
+    # ESLint: "path/file.ts:line:col: message [rule-name]"
+    eslint_pattern = r'([\w/.-]+\.tsx?):(\d+):\d+:.+?\[([^\]]+)\]'
+    for file, line, rule in re.findall(eslint_pattern, verification_output):
+        errors.add(f"{file}:{line}:{rule}")
+    
+    return errors
+
+def calculate_feedback_coverage(mentioned_files: list, edited_files: list) -> float:
+    """Calculate % of Coach-mentioned files that Player actually edited.
+    
+    Returns:
+        1.0 if no files mentioned (perfect coverage by default)
+        0.0 to 1.0 representing coverage percentage
+    """
+    if not mentioned_files:
+        return 1.0  # No files mentioned = perfect coverage
+    mentioned_set = set(mentioned_files)
+    edited_set = set(edited_files)
+    addressed = mentioned_set & edited_set
+    return len(addressed) / len(mentioned_set)
+
 def get_repo_file_tree(root_dir=".", exclude_dirs=None, include_exts=None):
     """Get a simple list of file paths to help Coach see missing/misreferenced files.
 
@@ -2108,6 +2158,10 @@ def main():
         last_fast_fail_errors: list[str] = []
         fast_fail_retries_this_turn = 0
         zero_edits_streak = 0  # Track consecutive turns with 0 edits to detect stuck loops
+        
+        # Inter-agent communication tracking
+        mentioned_files = []  # Files Coach mentions in feedback (for next turn's Player response tracking)
+        previous_error_fingerprints = set()  # Error fingerprints from previous turn (for persistence detection)
 
         while turn <= max_turns:
             log_print(f"Turn {turn}/{max_turns}", verbose=args.verbose, quiet=args.quiet)
@@ -2451,6 +2505,53 @@ def main():
                     verbose=args.verbose,
                     quiet=args.quiet
                 )
+            
+            # Track Player response to Coach feedback from previous turn
+            if turn > 1 and mentioned_files:  # Skip Turn 1 (no prior feedback)
+                feedback_coverage = calculate_feedback_coverage(mentioned_files, files_changed)
+                unexpected_edits = [f for f in files_changed if f not in mentioned_files]
+                
+                player_response_metrics = {
+                    "edited_files": files_changed,
+                    "edited_files_count": len(files_changed),
+                    "feedback_coverage": round(feedback_coverage, 2),
+                    "unexpected_edits": unexpected_edits,
+                    "unexpected_edits_count": len(unexpected_edits)
+                }
+                
+                # Log Player response to Coach feedback
+                run_log.log_event(
+                    turn_number=turn,
+                    phase="loop",
+                    agent="player",
+                    model=args.player_model,
+                    action="respond_to_feedback",
+                    result="success",
+                    details=player_response_metrics
+                )
+                
+                # WARNING: Low feedback coverage
+                if feedback_coverage < 0.5:
+                    warning_msg = (
+                        f"⚠️  WARNING: Player addressed only {feedback_coverage*100:.0f}% "
+                        f"of Coach's mentioned files ({len(files_changed)}/{len(mentioned_files)})"
+                    )
+                    log_print(warning_msg, verbose=True, quiet=args.quiet)
+                    run_log.log_event(
+                        turn_number=turn,
+                        phase="loop",
+                        agent="system",
+                        model="monitor",
+                        action="warning",
+                        result="detected",
+                        details={
+                            "warning_type": "low_feedback_coverage",
+                            "coverage": round(feedback_coverage, 2),
+                            "mentioned_count": len(mentioned_files),
+                            "edited_count": len(files_changed),
+                            "severity": "medium"
+                        }
+                    )
 
             if file_write_errors:
                 log_print(
@@ -2657,6 +2758,76 @@ def main():
                     verbose=args.verbose,
                     quiet=args.quiet,
                 )
+            
+            # Track error persistence across turns
+            if verification_errors:
+                current_error_fingerprints = extract_error_fingerprints(command_outputs)
+                
+                # Compare with previous turn (if exists)
+                persisting = set()
+                resolved = set()
+                new_errors = current_error_fingerprints
+                
+                if previous_error_fingerprints:
+                    persisting = current_error_fingerprints & previous_error_fingerprints
+                    resolved = previous_error_fingerprints - current_error_fingerprints
+                    new_errors = current_error_fingerprints - previous_error_fingerprints
+                
+                persistence_rate = (
+                    len(persisting) / len(previous_error_fingerprints) 
+                    if previous_error_fingerprints else 0.0
+                )
+                
+                error_persistence_metrics = {
+                    "current_errors": sorted(list(current_error_fingerprints))[:10],  # Limit to 10 for log size
+                    "current_error_count": len(current_error_fingerprints),
+                    "persisting_errors": sorted(list(persisting))[:5],  # Show top 5
+                    "persisting_count": len(persisting),
+                    "resolved_errors": sorted(list(resolved))[:5],
+                    "resolved_count": len(resolved),
+                    "new_errors": sorted(list(new_errors))[:5],
+                    "new_error_count": len(new_errors),
+                    "persistence_rate": round(persistence_rate, 2)
+                }
+                
+                run_log.log_event(
+                    turn_number=turn,
+                    phase="loop",
+                    agent="system",
+                    model="monitor",
+                    action="track_error_persistence",
+                    result="success",
+                    details=error_persistence_metrics
+                )
+                
+                # WARNING: High error persistence (same errors stuck across turns)
+                if turn > 2 and persistence_rate > 0.7 and len(persisting) > 0:
+                    warning_msg = (
+                        f"⚠️  WARNING: {len(persisting)} errors persisting at {persistence_rate*100:.0f}% rate. "
+                        f"Stuck on: {sorted(list(persisting))[:2]}"
+                    )
+                    log_print(warning_msg, verbose=True, quiet=args.quiet)
+                    run_log.log_event(
+                        turn_number=turn,
+                        phase="loop",
+                        agent="system",
+                        model="monitor",
+                        action="warning",
+                        result="detected",
+                        details={
+                            "warning_type": "high_error_persistence",
+                            "persistence_rate": round(persistence_rate, 2),
+                            "persisting_count": len(persisting),
+                            "persisting_errors": sorted(list(persisting))[:3],
+                            "severity": "high"
+                        }
+                    )
+                
+                # Store for next turn comparison
+                previous_error_fingerprints = current_error_fingerprints
+            else:
+                # No errors: clear previous fingerprints
+                previous_error_fingerprints = set()
 
             # Log Player action with comprehensive metrics
             run_log.log_event(
@@ -2929,8 +3100,20 @@ def main():
                     coach_feedback[:200] + "..." if len(coach_feedback) > 200 else coach_feedback
                 )
                 log_print(f"[Coach] Feedback: {fb_preview}", verbose=True, quiet=args.quiet)
+            
+            # Parse Coach feedback for inter-agent communication metrics
+            mentioned_files = extract_file_mentions(coach_feedback)  # Update for next turn's Player tracking
+            action_items = len(re.findall(r'^\d+\.', coach_feedback, re.MULTILINE))
+            
+            feedback_metrics = {
+                "mentioned_files": mentioned_files,
+                "mentioned_files_count": len(mentioned_files),
+                "action_items_count": action_items,
+                "feedback_length_chars": len(coach_feedback),
+                "feedback_type": coach_status
+            }
 
-            # Log Coach decision with full feedback for debugging
+            # Log Coach decision with full feedback and inter-agent metrics
             run_log.log_event(
                 turn_number=turn,
                 phase="loop",
@@ -2942,6 +3125,7 @@ def main():
                     "decision": "approved" if coach_status == "APPROVED" else "rejected",
                     "reason_length": len(coach_feedback),
                     "feedback_text": coach_feedback,
+                    "feedback_metrics": feedback_metrics
                 }
             )
             
