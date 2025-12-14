@@ -735,9 +735,40 @@ def extract_json(text, run_log=None, turn_number=0, agent="unknown"):
         try:
             return json.loads(candidate)
         except json.JSONDecodeError:
+            # Attempt 1: Fix trailing commas
             fixed = re.sub(r",\s*([}\]])", r"\1", candidate)
             try:
                 return json.loads(fixed)
+            except json.JSONDecodeError:
+                pass
+            
+            # Attempt 2: Strip JS-style comments (// ...) which LLMs love to add
+            # Be careful not to strip http:// links inside strings
+            # Regex: Match // outside of quotes (simplified approximation)
+            lines = candidate.splitlines()
+            cleaned_lines = []
+            for line in lines:
+                # Simple strip of // comment at end of line if it looks like a comment
+                # This is heuristic but handles the common case: "key": "value", // comment
+                if "//" in line:
+                    # Check if // is inside quotes? Hard to do perfectly with regex.
+                    # Safe bet: if // is after the last quote, it's a comment.
+                    # Or if the line has no quotes.
+                    quote_count = line.count('"')
+                    if quote_count % 2 == 0:
+                        # Balanced quotes, check if // is after the last one
+                        last_quote = line.rfind('"')
+                        comment_start = line.find("//")
+                        if comment_start > last_quote:
+                            line = line[:comment_start]
+                cleaned_lines.append(line)
+            
+            fixed_comments = "\n".join(cleaned_lines)
+            # Re-apply trailing comma fix on top of comment fix
+            fixed_comments = re.sub(r",\s*([}\]])", r"\1", fixed_comments)
+            
+            try:
+                return json.loads(fixed_comments)
             except json.JSONDecodeError:
                 continue
 
@@ -830,6 +861,47 @@ def run_architect_phase(
             )
         return None
 
+def detect_verification_commands(root_dir="."):
+    """Detect project type and return relevant verification commands (LSP-like checks)."""
+    commands = []
+    root = Path(root_dir)
+    
+    # Node/JS/TS
+    pkg_json = root / "package.json"
+    if pkg_json.exists():
+        try:
+            with open(pkg_json, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                scripts = data.get("scripts", {})
+                
+                # 1. Build / Typecheck (LSP equivalent)
+                if "build" in scripts:
+                    commands.append("npm run build")
+                elif "typecheck" in scripts:
+                    commands.append("npm run typecheck")
+                elif (root / "tsconfig.json").exists():
+                    # Fallback: try to run tsc directly if installed locally
+                    tsc_path = root / "node_modules" / ".bin" / "tsc"
+                    if sys.platform == "win32":
+                        tsc_path = tsc_path.with_suffix(".cmd")
+                    
+                    if tsc_path.exists():
+                        commands.append(f"{tsc_path} --noEmit")
+                
+                # 2. Lint
+                if "lint" in scripts:
+                    commands.append("npm run lint")
+                    
+        except Exception:
+            pass
+    elif (root / "tsconfig.json").exists():
+        # No package.json but tsconfig exists? Try global tsc or just hope
+        # Actually, without package.json, we can't easily guess where tsc is unless global.
+        # We'll skip for now to avoid 'command not found' spam.
+        pass
+            
+    return commands
+
 def main():
     configure_stdio_utf8()
     parser = argparse.ArgumentParser(
@@ -916,6 +988,11 @@ def main():
         "--no-auto-verify",
         action="store_true",
         help="Disable automatic verification (e.g., npm build/lint when package.json exists)."
+    )
+    parser.add_argument(
+        "--coach-focus-recent",
+        action="store_true",
+        help="Restrict Coach context to only files edited in the current turn (ignoring previous turns)."
     )
     args = parser.parse_args()
     
@@ -1172,6 +1249,17 @@ def main():
                     quiet=args.quiet
                 )
             
+            # Check for "Lazy Player" (claims success but no edits)
+            if not files_changed and not file_ops_applied and not player_data.get("commands_to_run"):
+                log_print("[Player] No actions taken (lazy turn).", verbose=args.verbose, quiet=args.quiet)
+                feedback = (
+                    "CRITICAL ERROR: You did not perform any actions (no files edited, no file_ops, no commands). "
+                    "You MUST modify the codebase to address the feedback. "
+                    "If you think no changes are needed, you must explain why in 'thought_process' and run a verification command."
+                )
+                # Skip Coach review to save tokens/time since nothing changed
+                continue
+            
             # Run Commands
             command_outputs = ""
             executed_commands = []
@@ -1182,8 +1270,9 @@ def main():
                 command_outputs += output + "\n"
 
             verify_commands = list(args.verify_cmd)
-            if auto_verify and Path("package.json").exists():
-                for cmd in ["npm run lint", "npm run build"]:
+            if auto_verify:
+                detected_cmds = detect_verification_commands(".")
+                for cmd in detected_cmds:
                     if cmd not in player_commands and cmd not in verify_commands:
                         verify_commands.append(cmd)
 
@@ -1223,7 +1312,23 @@ def main():
                 f"COMMAND OUTPUTS:\n{command_outputs}"
             )
             
-            if context_mode == "git-changed":
+            # Determine Coach context
+            coach_context_paths = None
+            if args.coach_focus_recent and files_changed:
+                coach_context_paths = files_changed
+                log_print(f"[Coach] Focusing on {len(files_changed)} recently edited files.", verbose=args.verbose, quiet=args.quiet)
+
+            if coach_context_paths is not None:
+                # Use explicit list of files (recent edits)
+                current_files_new, meta_new = build_changed_files_snapshot(
+                    coach_context_paths,
+                    root_dir=".",
+                    include_exts=include_exts,
+                    max_total_bytes=args.context_max_bytes,
+                    max_file_bytes=args.context_max_file_bytes,
+                    max_files=args.context_max_files,
+                )
+            elif context_mode == "git-changed":
                 changed_paths = get_git_changed_paths(repo_dir=".") or []
                 current_files_new, meta_new = build_changed_files_snapshot(
                     changed_paths,

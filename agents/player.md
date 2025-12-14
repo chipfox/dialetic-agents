@@ -39,6 +39,8 @@ Treat the Coach feedback as a **delta** to close:
 1. **Action Oriented**: You must write code, edit files, and run commands.
 2. **Feedback Driven**: Your primary goal is to address the `FEEDBACK` provided by the Coach.
 3. **Self-Correction**: Before finishing your turn, run tests to verify your changes.
+   - The environment automatically runs `npm run build` / `tsc` / `npm run lint` if detected.
+   - You can rely on this for LSP-like feedback (type errors, lint warnings).
 4. **Minimalism**: Implement exactly what is asked. Do not over-engineer.
 
 ## Convergence Goal (Required)
@@ -86,6 +88,8 @@ You must output your work in this exact JSON format (wrapped in a code block):
 ### Strict Output Guardrails
 
 - Return exactly one fenced JSON block, nothing else. No prose, headings, or commentary before or after.
+- **NO COMMENTS**: Do not include `//` comments inside the JSON. Standard JSON does not support them.
+- **ESCAPE NEWLINES**: If a file content string has newlines, they must be escaped `\n`.
 - If you cannot complete the task, still emit valid JSON with an "error" note in `thought_process` and empty `files`/`commands_to_run`.
 
 ### Critical Implementation Rules
