@@ -182,7 +182,39 @@ def get_git_changed_paths(repo_dir="."):
     return paths
 
 
-def build_codebase_snapshot(
+def _build_file_list(mode, root_dir, changed_paths, include_exts, exclude_dirs):
+    """Build list of files based on mode (snapshot or changed)."""
+    if mode == "snapshot":
+        # Try git ls-files first
+        git_files = []
+        try:
+            code, out, _ = _run_capture(["git", "ls-files"], cwd=root_dir)
+            if code == 0:
+                git_files = [f.strip() for f in out.splitlines() if f.strip()]
+        except Exception:
+            pass
+
+        if git_files:
+            return git_files
+        else:
+            # Fallback to os.walk
+            file_list = []
+            for root, dirs, files in os.walk(root_dir):
+                dirs[:] = [d for d in sorted(dirs) if not _should_exclude_dir(d, exclude_dirs)]
+                for filename in sorted(files):
+                    path = Path(root) / filename
+                    rel_path = os.path.relpath(path, root_dir)
+                    file_list.append(rel_path)
+            return file_list
+    elif mode == "changed":
+        return changed_paths
+    else:
+        raise ValueError(f"Invalid mode: {mode}")
+
+
+def build_context(
+    mode="snapshot",
+    changed_paths=None,
     root_dir=".",
     include_exts=None,
     exclude_dirs=None,
@@ -191,12 +223,25 @@ def build_codebase_snapshot(
     max_files=DEFAULT_CONTEXT_MAX_FILES,
 ):
     """
-    Build a snapshot of the codebase respecting gitignore.
+    Build a context snapshot of files.
     
+    Args:
+        mode: "snapshot" for full codebase or "changed" for specific files
+        changed_paths: List of relative paths (required when mode="changed")
+        root_dir: Root directory for file resolution
+        include_exts: File extensions to include
+        exclude_dirs: Directories to exclude (only used in snapshot mode)
+        max_total_bytes: Maximum total bytes to include
+        max_file_bytes: Maximum bytes per file
+        max_files: Maximum number of files
+        
     Returns:
         (snapshot_text, metadata_dict): Snapshot contains file headers and contents.
                                        Metadata includes list of files, byte counts, etc.
     """
+    if mode == "changed" and changed_paths is None:
+        raise ValueError("changed_paths required when mode='changed'")
+    
     include_exts = include_exts or DEFAULT_CONTEXT_EXTS
     include_exts = set(_normalize_ext_list(include_exts))
     exclude_dirs = exclude_dirs or DEFAULT_EXCLUDE_DIRS
@@ -205,143 +250,29 @@ def build_codebase_snapshot(
     total_bytes = 0
     snapshot_parts = []
 
-    # Try to use git ls-files first to respect .gitignore
-    git_files = []
-    try:
-        code, out, _ = _run_capture(["git", "ls-files"], cwd=root_dir)
-        if code == 0:
-            git_files = [f.strip() for f in out.splitlines() if f.strip()]
-    except Exception:
-        pass
+    # Get file list based on mode
+    file_list = _build_file_list(mode, root_dir, changed_paths, include_exts, exclude_dirs)
 
-    if git_files:
-        # Use git file list
-        for rel_path in git_files:
-            path = Path(root_dir) / rel_path
-            
-            # Check exclusions manually just in case
-            parts = Path(rel_path).parts
-            if any(_should_exclude_dir(p, exclude_dirs) for p in parts):
-                continue
-                
-            ext = path.suffix.lower()
-            if ext not in include_exts:
-                continue
-            
-            if len(included_files) >= max_files:
-                break
-            
-            try:
-                if not path.exists(): continue
-                size = path.stat().st_size
-            except OSError:
-                continue
-
-            if total_bytes >= max_total_bytes:
-                break
-
-            read_limit = min(max_file_bytes, max_total_bytes - total_bytes)
-            try:
-                with open(path, "rb") as f:
-                    data = f.read(read_limit)
-                content = data.decode("utf-8", errors="replace")
-            except OSError:
-                continue
-
-            header = f"\n--- {rel_path} ---\n"
-            snapshot_parts.append(header)
-            snapshot_parts.append(content)
-            if size > read_limit:
-                snapshot_parts.append("\n[TRUNCATED]\n")
-            included_files.append(rel_path)
-            total_bytes += len(header.encode("utf-8")) + len(data)
-            
-    else:
-        # Fallback to os.walk
-        for root, dirs, files in os.walk(root_dir):
-            dirs[:] = [d for d in sorted(dirs) if not _should_exclude_dir(d, exclude_dirs)]
-            for filename in sorted(files):
-                path = Path(root) / filename
-                rel_path = os.path.relpath(path, root_dir)
-                ext = path.suffix.lower()
-                if ext not in include_exts:
-                    continue
-
-                if len(included_files) >= max_files:
-                    break
-                try:
-                    size = path.stat().st_size
-                except OSError:
-                    continue
-
-                if total_bytes >= max_total_bytes:
-                    break
-
-                read_limit = min(max_file_bytes, max_total_bytes - total_bytes)
-                try:
-                    with open(path, "rb") as f:
-                        data = f.read(read_limit)
-                    content = data.decode("utf-8", errors="replace")
-                except OSError:
-                    continue
-
-                header = f"\n--- {rel_path} ---\n"
-                snapshot_parts.append(header)
-                snapshot_parts.append(content)
-                if size > read_limit:
-                    snapshot_parts.append("\n[TRUNCATED]\n")
-                included_files.append(rel_path)
-                total_bytes += len(header.encode("utf-8")) + len(data)
-
-            if len(included_files) >= max_files or total_bytes >= max_total_bytes:
-                break
-
-    meta = {
-        "included_files": included_files,
-        "total_bytes": total_bytes,
-        "max_total_bytes": max_total_bytes,
-        "max_file_bytes": max_file_bytes,
-        "max_files": max_files,
-        "truncated": total_bytes >= max_total_bytes or len(included_files) >= max_files,
-    }
-    return "".join(snapshot_parts), meta
-
-
-def build_changed_files_snapshot(
-    changed_paths,
-    root_dir=".",
-    include_exts=None,
-    max_total_bytes=DEFAULT_CONTEXT_MAX_BYTES,
-    max_file_bytes=DEFAULT_CONTEXT_MAX_FILE_BYTES,
-    max_files=DEFAULT_CONTEXT_MAX_FILES,
-):
-    """
-    Build a snapshot of only the changed files.
-    
-    Args:
-        changed_paths: List of relative paths that have changed
-        
-    Returns:
-        (snapshot_text, metadata_dict): Similar to build_codebase_snapshot
-    """
-    include_exts = include_exts or DEFAULT_CONTEXT_EXTS
-    include_exts = set(_normalize_ext_list(include_exts))
-
-    included_files = []
-    total_bytes = 0
-    snapshot_parts = []
-
-    for rel_path in changed_paths:
+    # Process files
+    for rel_path in file_list:
         if len(included_files) >= max_files or total_bytes >= max_total_bytes:
             break
 
         path = Path(root_dir) / rel_path
+        
+        # Check exclusions for snapshot mode
+        if mode == "snapshot":
+            parts = Path(rel_path).parts
+            if any(_should_exclude_dir(p, exclude_dirs) for p in parts):
+                continue
+        
         ext = path.suffix.lower()
         if ext not in include_exts:
             continue
+        
         if not path.exists() or not path.is_file():
             continue
-
+        
         try:
             size = path.stat().st_size
         except OSError:
@@ -372,6 +303,47 @@ def build_changed_files_snapshot(
         "truncated": total_bytes >= max_total_bytes or len(included_files) >= max_files,
     }
     return "".join(snapshot_parts), meta
+
+
+# Backward compatibility wrappers
+def build_codebase_snapshot(
+    root_dir=".",
+    include_exts=None,
+    exclude_dirs=None,
+    max_total_bytes=DEFAULT_CONTEXT_MAX_BYTES,
+    max_file_bytes=DEFAULT_CONTEXT_MAX_FILE_BYTES,
+    max_files=DEFAULT_CONTEXT_MAX_FILES,
+):
+    """Build a snapshot of the entire codebase. (Wrapper for build_context)"""
+    return build_context(
+        mode="snapshot",
+        root_dir=root_dir,
+        include_exts=include_exts,
+        exclude_dirs=exclude_dirs,
+        max_total_bytes=max_total_bytes,
+        max_file_bytes=max_file_bytes,
+        max_files=max_files,
+    )
+
+
+def build_changed_files_snapshot(
+    changed_paths,
+    root_dir=".",
+    include_exts=None,
+    max_total_bytes=DEFAULT_CONTEXT_MAX_BYTES,
+    max_file_bytes=DEFAULT_CONTEXT_MAX_FILE_BYTES,
+    max_files=DEFAULT_CONTEXT_MAX_FILES,
+):
+    """Build a snapshot of changed files. (Wrapper for build_context)"""
+    return build_context(
+        mode="changed",
+        changed_paths=changed_paths,
+        root_dir=root_dir,
+        include_exts=include_exts,
+        max_total_bytes=max_total_bytes,
+        max_file_bytes=max_file_bytes,
+        max_files=max_files,
+    )
 
 
 def apply_file_ops(file_ops):

@@ -1,6 +1,11 @@
 ---
 name: dialectical-loop
 description: Run a bounded adversarial cooperation coding loop (Architect -> Player <-> Coach). Use when implementing features from REQUIREMENTS.md, generating SPECIFICATION.md plans, and iterating with strict review until approved.
+version: 1.0.3
+tags: [coding, multi-agent, code-review, automation, dialectical, python, llm, workflow, github-copilot]
+author: chipfox
+repository: https://github.com/chipfox/dialetic-agents
+license: MIT
 ---
 
 # Dialectical Loop
