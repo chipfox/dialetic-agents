@@ -926,6 +926,7 @@ def main():
 
     # Initialize observability
     run_log = RunLog(verbose=args.verbose, quiet=args.quiet)
+    run_log.create_log_file()  # Create file immediately so it can be watched
     log_print(
         f"Starting Dialectical Autocoding Loop (max_turns={max_turns}, "
         f"verbose={args.verbose}, quiet={args.quiet})", 
