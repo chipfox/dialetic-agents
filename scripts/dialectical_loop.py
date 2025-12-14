@@ -149,6 +149,8 @@ class RunLog:
             event["error"] = str(error)
             self.errors.append(error)
         self.turns.append(event)
+        # Incrementally flush to file so watchers see live updates
+        self._flush_log_to_file()
 
     def estimate_tokens(self, text):
         """Simple token estimate: ~4 chars ≈ 1 token."""
@@ -207,6 +209,22 @@ class RunLog:
     def tailable_log_path(self, directory="."):
         """Return the log path (string) so callers can show how to watch it."""
         return str(Path(directory) / f"{self.run_id}.json")
+
+    def create_log_file(self, directory="."):
+        """Create the log file immediately with a stub so watchers can follow it."""
+        self.log_file_path = Path(directory) / f"{self.run_id}.json"
+        # Write initial stub so the file exists and can be followed
+        self._flush_log_to_file()
+
+    def _flush_log_to_file(self):
+        """Write the current state to the log file (called after each event)."""
+        if not hasattr(self, 'log_file_path'):
+            return
+        try:
+            with open(self.log_file_path, "w", encoding="utf-8") as f:
+                json.dump(self.to_json(), f, indent=2)
+        except OSError:
+            pass  # Silent fail if we can't write (e.g., permission issue)
 
     def report(self, status="unknown", message=""):
         """Print a human-readable summary report."""
@@ -1314,8 +1332,9 @@ def main():
         log_print(f"Unexpected error: {e}", verbose=args.verbose, quiet=False)
         run_log.report(status="error", message=str(e))
     finally:
-        # Always write log file
-        log_path = run_log.write_log_file()
+        # Final flush (already done incrementally, but ensure it's written)
+        run_log._flush_log_to_file()
+        log_path = str(run_log.tailable_log_path())
         log_print(f"Observability log saved: {log_path}", verbose=args.verbose, quiet=args.quiet)
 
 if __name__ == "__main__":
