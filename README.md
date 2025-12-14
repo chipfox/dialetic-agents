@@ -63,11 +63,14 @@ In the project directory you want to modify:
 - `--context-mode {auto,snapshot,git-changed}`
   - `auto` (default): snapshot on turn 1, then only git-changed files
 - `--context-max-bytes N`, `--context-max-file-bytes N`, `--context-max-files N`
+- `--coach-focus-recent`: Restrict Coach context to only files edited in the current turn (saves tokens).
+- `--fast-fail`: Skip Coach review if verification commands fail (saves tokens/time).
 
 ### Verification flags
 
 - `--verify-cmd "<command>"` (repeatable)
 - `--no-auto-verify`
+- **Automatic LSP**: The script auto-detects `npm run build`, `npm run typecheck`, or `tsc` to provide type errors.
 
 ### Model selection (Architect, Player, Coach)
 

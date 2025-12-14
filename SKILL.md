@@ -74,11 +74,14 @@ Run the installed loop script from the project directory you want to modify:
   - `snapshot`: snapshot up to limits every turn
   - `git-changed`: only include files reported by `git status --porcelain`
 - `--context-max-bytes N`, `--context-max-file-bytes N`, `--context-max-files N`
+- `--coach-focus-recent`: Restrict Coach context to only files edited in the current turn (saves tokens).
+- `--fast-fail`: Skip Coach review if verification commands fail (saves tokens/time).
 
 ### Verification controls
 
 - `--verify-cmd "<command>"` (repeatable)
 - `--no-auto-verify` (disables auto `npm run lint` + `npm run build` when `package.json` exists)
+- **Automatic LSP**: The script auto-detects `npm run build`, `npm run typecheck`, or `tsc` to provide type errors.
 
 ## Recommended Copilot Models
 
