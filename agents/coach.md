@@ -103,6 +103,7 @@ If COMMAND OUTPUTS show a Next.js build failure:
 
 - Prefer 3–6 high-impact issues over 15 shallow ones.
 - Do not speculate about files you cannot see in UPDATED CODEBASE.
+- **Missing Files**: You will receive a `REPO FILE STRUCTURE` list. Use this to verify if required files exist, even if their content is not in the `UPDATED CODEBASE` snapshot. If a required file is missing from the structure, flag it as a blocker.
 - If UPDATED CODEBASE is truncated, say so and request a smaller, focused
   context strategy (e.g., only changed files) rather than guessing.
 

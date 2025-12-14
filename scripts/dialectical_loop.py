@@ -994,6 +994,35 @@ def truncate_output(output, max_chars=2000):
     
     return f"{head}\n... [OUTPUT TRUNCATED {len(output) - max_chars} CHARS] ...\n{tail}"
 
+def get_repo_file_tree(root_dir=".", exclude_dirs=None):
+    """Get a simple list of all files in the repo to help Coach see missing files."""
+    exclude_dirs = exclude_dirs or DEFAULT_EXCLUDE_DIRS
+    file_list = []
+    
+    # Try git ls-files first
+    try:
+        code, out, _ = _run_capture(["git", "ls-files"], cwd=root_dir)
+        if code == 0:
+            files = [f.strip() for f in out.splitlines() if f.strip()]
+            # Filter exclusions just in case
+            for f in files:
+                parts = Path(f).parts
+                if not any(_should_exclude_dir(p, exclude_dirs) for p in parts):
+                    file_list.append(f)
+            return "\n".join(sorted(file_list))
+    except Exception:
+        pass
+        
+    # Fallback to os.walk
+    for root, dirs, files in os.walk(root_dir):
+        dirs[:] = [d for d in sorted(dirs) if not _should_exclude_dir(d, exclude_dirs)]
+        for filename in sorted(files):
+            path = Path(root) / filename
+            rel_path = os.path.relpath(path, root_dir)
+            file_list.append(rel_path)
+            
+    return "\n".join(sorted(file_list))
+
 def main():
     configure_stdio_utf8()
     parser = argparse.ArgumentParser(
@@ -1497,10 +1526,15 @@ def main():
 
             # --- Coach Turn ---
             log_print(f"[Coach] ({args.coach_model}) Reviewing...", verbose=args.verbose, quiet=args.quiet)
+            
+            # Always include full file tree so Coach knows what exists, even if content is hidden
+            repo_file_tree = get_repo_file_tree(".", exclude_dirs)
+            
             coach_input = (
                 f"REQUIREMENTS:\n{requirements}\n\nSPECIFICATION:\n{specification}\n\n"
                 f"PLAYER OUTPUT:\n{json.dumps(player_data, indent=2)}\n\n"
-                f"COMMAND OUTPUTS:\n{command_outputs}"
+                f"COMMAND OUTPUTS:\n{command_outputs}\n\n"
+                f"REPO FILE STRUCTURE (Names Only):\n{repo_file_tree}"
             )
             
             # Determine Coach context
