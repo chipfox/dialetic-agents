@@ -298,8 +298,20 @@ def save_file(path, content):
     if dirname:
         os.makedirs(dirname, exist_ok=True)
     _ensure_writable(path)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(content)
+    # Use atomic write: write to a temp file in the same dir then replace
+    fd, tmp_path = tempfile.mkstemp(dir=dirname or None)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        # Ensure the target (if existing) is writable before replacing
+        _ensure_writable(path)
+        os.replace(tmp_path, path)
+    finally:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
 
 
 def safe_save_file(path, content):
