@@ -10,6 +10,20 @@ import tempfile
 from pathlib import Path
 from datetime import datetime, timezone
 
+
+SUBPROCESS_TEXT_ENCODING = "utf-8"
+
+
+def configure_stdio_utf8():
+    """Best-effort: make console I/O resilient to Unicode on Windows."""
+    for stream in (getattr(sys, "stdout", None), getattr(sys, "stderr", None)):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(encoding=SUBPROCESS_TEXT_ENCODING, errors="replace")
+            except Exception:
+                pass
+
 # Configuration
 MAX_TURNS = 10
 REQUIREMENTS_FILE = "REQUIREMENTS.md"
@@ -219,7 +233,14 @@ def save_file(path, content):
 
 def run_command(command):
     try:
-        result = subprocess.run(command, shell=True, capture_output=True, text=True)
+        result = subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            encoding=SUBPROCESS_TEXT_ENCODING,
+            errors="replace",
+        )
         return (
             f"Command: {command}\nExit Code: {result.returncode}\n"
             f"Output:\n{result.stdout}\nError:\n{result.stderr}"
@@ -325,6 +346,8 @@ def _run_capture(argv, cwd="."):
             cwd=cwd,
             capture_output=True,
             text=True,
+            encoding=SUBPROCESS_TEXT_ENCODING,
+            errors="replace",
             shell=False,
         )
         return result.returncode, result.stdout, result.stderr
@@ -462,7 +485,12 @@ def apply_file_ops(file_ops):
 
 def get_github_token():
     try:
-        token = subprocess.check_output(["gh", "auth", "token"], text=True).strip()
+        token = subprocess.check_output(
+            ["gh", "auth", "token"],
+            text=True,
+            encoding=SUBPROCESS_TEXT_ENCODING,
+            errors="replace",
+        ).strip()
         return token
     except Exception as e:
         print(f"Error getting GitHub token: {e}")
@@ -525,10 +553,26 @@ def get_llm_response(
     try:
         # Prefer shell=False for predictable argv handling; fallback to shell=True if needed.
         try:
-            result = subprocess.run(cmd, env=env, capture_output=True, text=True, shell=False)
+            result = subprocess.run(
+                cmd,
+                env=env,
+                capture_output=True,
+                text=True,
+                encoding=SUBPROCESS_TEXT_ENCODING,
+                errors="replace",
+                shell=False,
+            )
         except FileNotFoundError:
             cmd_str = subprocess.list2cmdline(cmd)
-            result = subprocess.run(cmd_str, env=env, capture_output=True, text=True, shell=True)
+            result = subprocess.run(
+                cmd_str,
+                env=env,
+                capture_output=True,
+                text=True,
+                encoding=SUBPROCESS_TEXT_ENCODING,
+                errors="replace",
+                shell=True,
+            )
         
         duration_s = time.time() - start_time
         output_tokens_est = run_log.estimate_tokens(result.stdout) if run_log else 0
@@ -737,6 +781,7 @@ def run_architect_phase(
         return None
 
 def main():
+    configure_stdio_utf8()
     parser = argparse.ArgumentParser(
         description="Run the Dialectical Autocoding Loop with built-in observability."
     )
