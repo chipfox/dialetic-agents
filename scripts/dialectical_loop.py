@@ -24,6 +24,34 @@ def configure_stdio_utf8():
             except Exception:
                 pass
 
+
+def check_project_write_access(project_dir: Path):
+    """Fail fast if the current project directory is not writable.
+
+    This often happens on Windows when the repo lives under OneDrive/Documents
+    and Controlled Folder Access blocks python/node from writing.
+    """
+    test_path = project_dir / ".dialectical-loop-write-test.tmp"
+    try:
+        test_path.write_bytes(b"ok")
+        test_path.unlink(missing_ok=True)
+        return True, ""
+    except PermissionError as e:
+        hint = (
+            f"Permission denied writing to project directory: {project_dir}\n"
+            "Common causes on Windows:\n"
+            "- Windows Security > Ransomware protection (Controlled folder access) blocking python/node\n"
+            "- Repo located under OneDrive/Documents/Desktop with special protection or sync locks\n\n"
+            "Fix options:\n"
+            "1) Move the repo to a non-protected path (e.g., C:\\dev\\YourRepo) and rerun\n"
+            "2) Allowlist your Python and Node executables in Controlled Folder Access\n"
+            "3) Ensure files/folders are not read-only and you own the directory\n\n"
+            f"Underlying error: {e}"
+        )
+        return False, hint
+    except OSError as e:
+        return False, f"Unable to write to project directory {project_dir}: {e}"
+
 # Configuration
 MAX_TURNS = 10
 REQUIREMENTS_FILE = "REQUIREMENTS.md"
@@ -885,6 +913,14 @@ def main():
 
     requirements_file = args.requirements_file
     spec_file = args.spec_file
+
+    ok, reason = check_project_write_access(Path.cwd())
+    if not ok:
+        log_print(reason, verbose=True, quiet=args.quiet)
+        run_log.report(status="failed", message=reason)
+        log_path = run_log.write_log_file()
+        log_print(f"Observability log: {log_path}", verbose=args.verbose, quiet=args.quiet)
+        return
 
     try:
         requirements = load_file(requirements_file)
