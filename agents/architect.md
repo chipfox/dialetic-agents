@@ -47,10 +47,17 @@ Write SPECIFICATION.md with these sections:
 3) **Acceptance Criteria**: exact commands that must pass (e.g., `npm run lint`,
    `npm run build`, tests).
 4) **File Plan**: a table of files to create/edit/delete/move.
-5) **Turn Plan (≤5 turns)**:
-   - Turn 1: unblock build/lint/test and remove structural conflicts.
-   - Turn 2–4: implement missing requirements in order of dependency.
-   - Turn 5: cleanup + verification + tighten types.
+5) **Implementation Checklist**: Use markdown checkboxes for all implementation items:
+
+   ```markdown
+   - [ ] Turn 1: item 1
+   - [ ] Turn 1: item 2
+   - [ ] Turn 2: item 3
+   - [ ] Turn 3: item 4
+   ```
+
+   The Player will check items as complete (`- [x]`). When ALL items are checked, mark completion with `Status: COMPLETE`.
+
 6) **Implementation Notes**: data structures, function signatures, edge cases.
 7) **Verification**: list commands and what “pass” means.
 
