@@ -314,15 +314,31 @@ def save_file(path, content):
     dirname = os.path.dirname(path)
     if dirname:
         os.makedirs(dirname, exist_ok=True)
-    _ensure_writable(path)
+    
+    # Ensure target is writable if it exists
+    if os.path.exists(path):
+        _ensure_writable(path)
+
     # Use atomic write: write to a temp file in the same dir then replace
+    # Note: mkstemp creates file with 0o600 permissions by default
     fd, tmp_path = tempfile.mkstemp(dir=dirname or None)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(content)
-        # Ensure the target (if existing) is writable before replacing
-        _ensure_writable(path)
-        os.replace(tmp_path, path)
+        
+        # On Windows, os.replace fails if target exists and is in use or readonly.
+        # We already tried _ensure_writable, but let's be robust.
+        if os.path.exists(path):
+            try:
+                os.replace(tmp_path, path)
+            except PermissionError:
+                # Fallback: try to remove target first (sometimes helps on Windows)
+                _ensure_writable(path)
+                os.remove(path)
+                os.replace(tmp_path, path)
+        else:
+            os.replace(tmp_path, path)
+            
     finally:
         if os.path.exists(tmp_path):
             try:
