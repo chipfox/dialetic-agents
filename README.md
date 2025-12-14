@@ -57,6 +57,7 @@ In the project directory you want to modify:
 - `--skip-architect`
 - `--quiet` (minimal output)
 - `--verbose` (debug output)
+- `--command-shell {auto,powershell,cmd,wsl}` (Windows: helps when commands are PowerShell vs bash; `auto` prefers PowerShell and uses WSL for Unix-like commands)
 
 ### Token-saving flags
 

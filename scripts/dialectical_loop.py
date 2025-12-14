@@ -2,6 +2,7 @@ import os
 import re
 import json
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -278,12 +279,47 @@ def save_file(path, content):
     dirname = os.path.dirname(path)
     if dirname:
         os.makedirs(dirname, exist_ok=True)
+    _ensure_writable(path)
     with open(path, "w", encoding="utf-8") as f:
         f.write(content)
 
-def run_command(command):
-    try:
-        result = subprocess.run(
+def _looks_like_unix_command(command: str) -> bool:
+    cmd = (command or "").lstrip()
+    if not cmd:
+        return False
+    first = cmd.split()[0]
+    unix_first = {
+        "ls",
+        "cat",
+        "grep",
+        "sed",
+        "awk",
+        "find",
+        "chmod",
+        "chown",
+        "cp",
+        "mv",
+        "rm",
+        "pwd",
+        "touch",
+        "head",
+        "tail",
+        "xargs",
+        "which",
+    }
+    if first in unix_first:
+        return True
+    # Common POSIX-only syntax hints
+    if "$(" in cmd or "`" in cmd or cmd.startswith("./"):
+        return True
+    return False
+
+
+def _run_shell_command(command: str, shell_kind: str):
+    shell_kind = (shell_kind or "auto").lower()
+
+    if os.name != "nt":
+        return subprocess.run(
             command,
             shell=True,
             capture_output=True,
@@ -291,12 +327,87 @@ def run_command(command):
             encoding=SUBPROCESS_TEXT_ENCODING,
             errors="replace",
         )
+
+    if shell_kind == "cmd":
+        args = ["cmd", "/d", "/s", "/c", command]
+        return subprocess.run(
+            args,
+            shell=False,
+            capture_output=True,
+            text=True,
+            encoding=SUBPROCESS_TEXT_ENCODING,
+            errors="replace",
+        )
+
+    if shell_kind == "powershell":
+        args = [
+            "powershell",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            command,
+        ]
+        return subprocess.run(
+            args,
+            shell=False,
+            capture_output=True,
+            text=True,
+            encoding=SUBPROCESS_TEXT_ENCODING,
+            errors="replace",
+        )
+
+    if shell_kind == "wsl":
+        args = ["wsl", "bash", "-lc", command]
+        return subprocess.run(
+            args,
+            shell=False,
+            capture_output=True,
+            text=True,
+            encoding=SUBPROCESS_TEXT_ENCODING,
+            errors="replace",
+        )
+
+    # auto
+    if _looks_like_unix_command(command):
+        try:
+            return _run_shell_command(command, "wsl")
+        except Exception:
+            pass
+    try:
+        return _run_shell_command(command, "powershell")
+    except Exception:
+        return _run_shell_command(command, "cmd")
+
+
+def run_command(command, shell_kind="auto"):
+    try:
+        result = _run_shell_command(command, shell_kind)
         return (
             f"Command: {command}\nExit Code: {result.returncode}\n"
             f"Output:\n{result.stdout}\nError:\n{result.stderr}"
         ), result.returncode
     except Exception as e:
         return f"Error running command {command}: {e}", 1
+
+
+def _ensure_writable(path: str) -> None:
+    if not path:
+        return
+    try:
+        if os.path.exists(path) and not os.path.isdir(path):
+            os.chmod(path, os.stat(path).st_mode | stat.S_IWRITE)
+    except Exception:
+        pass
+
+
+def _rmtree_force(path: str) -> None:
+    def _onerror(func, p, _exc_info):
+        os.chmod(p, stat.S_IWRITE)
+        func(p)
+
+    shutil.rmtree(path, onerror=_onerror)
 
 
 def _split_csv_arg(value):
@@ -561,6 +672,7 @@ def apply_file_ops(file_ops):
                 dst = op.get("to")
                 if not src or not dst:
                     raise ValueError("move requires 'from' and 'to'")
+                _ensure_writable(src)
                 os.makedirs(os.path.dirname(dst) or ".", exist_ok=True)
                 shutil.move(src, dst)
                 applied.append(f"move:{src}->{dst}")
@@ -569,8 +681,9 @@ def apply_file_ops(file_ops):
                 if not target:
                     raise ValueError("delete requires 'path'")
                 if os.path.isdir(target):
-                    shutil.rmtree(target)
+                    _rmtree_force(target)
                 elif os.path.exists(target):
+                    _ensure_writable(target)
                     os.remove(target)
                 applied.append(f"delete:{target}")
             elif op_type == "mkdir":
@@ -1075,6 +1188,14 @@ def main():
         help="Suppress all terminal output except final summary and log path."
     )
     parser.add_argument(
+        "--command-shell",
+        default="auto",
+        choices=["auto", "powershell", "cmd", "wsl"],
+        help=(
+            "Shell for running commands. On Windows, auto prefers PowerShell and may use WSL for Unix-like commands."
+        ),
+    )
+    parser.add_argument(
         "--context-exts",
         default=",".join(DEFAULT_CONTEXT_EXTS),
         help="Comma-separated file extensions to include in context snapshots."
@@ -1417,7 +1538,7 @@ def main():
                 if fix_cmds:
                     log_print(f"[Auto-Fix] Running {len(fix_cmds)} fixers...", verbose=args.verbose, quiet=args.quiet)
                     for cmd in fix_cmds:
-                        out, code = run_command(cmd)
+                        out, code = run_command(cmd, args.command_shell)
                         if code == 0:
                             log_print(f"[Auto-Fix] '{cmd}' success.", verbose=args.verbose, quiet=args.quiet)
                             run_log.log_event(
@@ -1460,7 +1581,7 @@ def main():
             
             player_commands = list(player_data.get("commands_to_run", []))
             for cmd in player_commands:
-                output, _code = run_command(cmd)
+                output, _code = run_command(cmd, args.command_shell)
                 executed_commands.append(cmd)
                 # Truncate output to save tokens
                 trunc_out = truncate_output(output)
@@ -1474,7 +1595,7 @@ def main():
                         verify_commands.append(cmd)
 
             for cmd in verify_commands:
-                output, _code = run_command(cmd)
+                output, _code = run_command(cmd, args.command_shell)
                 executed_commands.append(cmd)
                 # Truncate output to save tokens
                 trunc_out = truncate_output(output)
