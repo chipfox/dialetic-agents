@@ -2265,6 +2265,7 @@ def main():
             
             coach_status = coach_data.get("status", "UNKNOWN")
             coach_feedback = coach_data.get("feedback", "")
+            coach_spec_updates = coach_data.get("specification_updates", "")
             log_print(f"[Coach] Status: {coach_status}", verbose=args.verbose, quiet=args.quiet)
             if args.verbose:
                 # Log first 200 chars of feedback in verbose mode
@@ -2306,6 +2307,29 @@ def main():
             )
             
             if coach_status == "APPROVED":
+                # Apply Coach's specification updates (if provided)
+                if coach_spec_updates:
+                    try:
+                        ok, err = safe_save_file(spec_file, coach_spec_updates)
+                        if ok:
+                            log_print(
+                                f"[Coach] Updated {spec_file} with completion markers.",
+                                verbose=args.verbose,
+                                quiet=args.quiet,
+                            )
+                        else:
+                            log_print(
+                                f"[Warning] Could not write Coach's spec updates: {err}",
+                                verbose=True,
+                                quiet=args.quiet,
+                            )
+                    except Exception as e:
+                        log_print(
+                            f"[Warning] Error applying spec updates: {e}",
+                            verbose=True,
+                            quiet=args.quiet,
+                        )
+                
                 # Success is ONLY allowed when the specification is explicitly marked complete.
                 spec_now = load_file(spec_file)
                 spec_now_prog = _spec_progress(spec_now)
