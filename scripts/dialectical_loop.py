@@ -2098,6 +2098,7 @@ def main():
         last_fast_fail_outputs = ""
         last_fast_fail_errors: list[str] = []
         fast_fail_retries_this_turn = 0
+        zero_edits_streak = 0  # Track consecutive turns with 0 edits to detect stuck loops
 
         while turn <= max_turns:
             log_print(f"Turn {turn}/{max_turns}", verbose=args.verbose, quiet=args.quiet)
@@ -2116,8 +2117,7 @@ def main():
             if not feedback_for_player:
                 if turn == 1:
                     feedback_for_player = (
-                        "NONE (Turn 1 baseline). You MUST take action: implement Turn 1 items from SPECIFICATION "
-                        "and/or run verification commands. If you make no edits, you MUST still run verification."
+                        "NONE (Turn 1 baseline). You MUST take action: implement Turn 1 items from SPECIFICATION."
                     )
                 else:
                     feedback_for_player = "NONE"
@@ -2481,8 +2481,50 @@ def main():
                                 error=out[:500]
                             )
 
-            # Check for "Lazy Player" (claims success but no edits)
-            lazy_turn = (not files_changed and not file_ops_applied and not player_data.get("commands_to_run"))
+            # Check for "Lazy Player" or zero-edit patterns
+            made_changes = bool(files_changed or file_ops_applied)
+            lazy_turn = (not made_changes and not player_data.get("commands_to_run"))
+            zero_edit_with_verification = (not made_changes and player_data.get("commands_to_run"))
+            
+            # Track zero-edit streak
+            if not made_changes:
+                zero_edits_streak += 1
+            else:
+                zero_edits_streak = 0  # Reset on successful edit
+            
+            # Detect stuck loops: 3+ consecutive zero-edit attempts
+            if zero_edits_streak >= 3:
+                error_msg = (
+                    f"Aborting: Player has made 0 edits for {zero_edits_streak} consecutive attempts. "
+                    "This indicates the Player is stuck and unable to make progress. "
+                    "Possible causes: guardrail blocking necessary changes, unclear feedback, or context overload."
+                )
+                log_print(error_msg, verbose=True, quiet=args.quiet)
+                run_log.report(status="failed", message=error_msg)
+                break
+            
+            # Inject escalating feedback after 2 consecutive zero-edit attempts
+            if zero_edits_streak == 2:
+                feedback = (
+                    "CRITICAL: You have made 0 edits for 2 consecutive attempts. You are stuck. "
+                    "You MUST make code changes to address the feedback. "
+                    "If a guardrail is blocking you, find an alternative approach. "
+                    "If you cannot make progress, explain WHY in detail."
+                )
+                log_print("[Warning] Zero-edit streak detected, injecting escalation feedback.", verbose=args.verbose, quiet=args.quiet)
+                # Reset fast-fail state and continue to let Player try again with stronger feedback
+                last_skip_reason = ""
+                last_fast_fail_outputs = ""
+                last_fast_fail_errors = []
+                fast_fail_retries_this_turn = 0
+                skipped_without_coach += 1
+                if skipped_without_coach > max_skips_without_coach:
+                    error_msg = "Aborting: too many iterations without a Coach review."
+                    log_print(error_msg, verbose=True, quiet=args.quiet)
+                    run_log.report(status="failed", message=error_msg)
+                    break
+                continue
+            
             if lazy_turn:
                 log_print("[Player] No actions taken (lazy turn).", verbose=args.verbose, quiet=args.quiet)
                 # Do not burn a whole turn. If we can auto-verify, do it anyway and let Fast-Fail/Coach decide.
@@ -2507,6 +2549,13 @@ def main():
                         run_log.report(status="failed", message=error_msg)
                         break
                     continue
+            
+            # Warn about wasteful zero-edit + verification pattern
+            if zero_edit_with_verification:
+                log_print(
+                    "[Warning] Player made 0 edits but ran verification commands - this is often wasteful.",
+                    verbose=args.verbose, quiet=args.quiet
+                )
             
             # Run Commands
             command_outputs = ""
@@ -2616,7 +2665,9 @@ def main():
                     }
                 )
                 last_skip_reason = "fast-fail"
-                last_fast_fail_outputs = command_outputs
+                # Truncate command outputs to prevent context bloat on repeated fast-fail retries
+                # Keep only the most recent failure details; earlier attempts are already in the conversation
+                last_fast_fail_outputs = truncate_output(command_outputs, max_chars=8000)
                 last_fast_fail_errors = list(verification_errors)
                 if not bypass_fast_fail:
                     skipped_without_coach += 1
