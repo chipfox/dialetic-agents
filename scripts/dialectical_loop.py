@@ -218,6 +218,95 @@ def load_file(path):
     with open(path, "r", encoding="utf-8") as f:
         return f.read()
 
+
+def _spec_progress(spec_text: str) -> dict:
+    """Compute spec completion state.
+
+    Supported completion mechanisms:
+    - Markdown checklists: '- [ ] item' and '- [x] item'
+      Complete iff there are zero unchecked items.
+    - Explicit marker: a line like 'Status: COMPLETE' (case-insensitive)
+
+    Returns a dict with keys:
+      mode: 'checklist' | 'marker' | 'unknown'
+      complete: bool
+      total_items: int
+      remaining_items: list[str]
+      hint: str (optional guidance when mode is unknown)
+    """
+    text = spec_text or ""
+
+    checklist_re = re.compile(r"(?m)^\s*[-*]\s*\[(?P<state>[ xX])\]\s*(?P<body>.+?)\s*$")
+    matches = list(checklist_re.finditer(text))
+    if matches:
+        remaining = []
+        for m in matches:
+            state = (m.group("state") or " ").strip().lower()
+            body = (m.group("body") or "").strip()
+            if state != "x":
+                remaining.append(body)
+        return {
+            "mode": "checklist",
+            "complete": len(remaining) == 0,
+            "total_items": len(matches),
+            "remaining_items": remaining,
+        }
+
+    marker_re = re.compile(r"(?mi)^\s*status\s*:\s*complete\b")
+    if marker_re.search(text):
+        return {
+            "mode": "marker",
+            "complete": True,
+            "total_items": 0,
+            "remaining_items": [],
+        }
+
+    return {
+        "mode": "unknown",
+        "complete": False,
+        "total_items": 0,
+        "remaining_items": [],
+        "hint": (
+            "Cannot determine completion from SPECIFICATION.md. "
+            "Add markdown checkboxes (- [ ] / - [x]) or add a line 'Status: COMPLETE' when finished."
+        ),
+    }
+
+
+def _format_open_spec_items(spec_prog: dict, max_items: int = 40) -> str:
+    remaining = list(spec_prog.get("remaining_items") or [])
+    if not remaining:
+        return "(none)"
+    shown = remaining[:max_items]
+    lines = [f"- [ ] {item}" for item in shown]
+    if len(remaining) > max_items:
+        lines.append(f"- ... ({len(remaining) - max_items} more)")
+    return "\n".join(lines)
+
+
+def _spec_for_model(spec_text: str, spec_prog: dict, turn: int, max_chars: int = 12000) -> str:
+    """Return a token-sparing spec view for prompts.
+
+    - Turn 1: keep full spec (truncated).
+    - Later turns: if checklist-based, include only open items + a small header.
+    """
+    text = spec_text or ""
+    if turn <= 1:
+        return truncate_output(text, max_chars=max_chars)
+
+    if spec_prog.get("mode") == "checklist":
+        header = truncate_output(text, max_chars=min(2500, max_chars))
+        open_items = _format_open_spec_items(spec_prog)
+        return (
+            header
+            + "\n\nOPEN SPEC ITEMS (unchecked):\n"
+            + open_items
+            + "\n\n(Full specification omitted on later turns to save tokens.)"
+        )
+
+    # Unknown/marker mode: keep truncated full spec so the model can decide how to mark completion.
+    return truncate_output(text, max_chars=max_chars)
+
 def save_file(path, content):
     dirname = os.path.dirname(path)
     if dirname:
@@ -1226,6 +1315,9 @@ def main():
             # Reload specs/requirements to capture any updates (e.g. Player marking items DONE)
             requirements = load_file(requirements_file)
             specification = load_file(spec_file)
+
+            spec_prog = _spec_progress(specification)
+            spec_for_prompt = _spec_for_model(specification, spec_prog, turn)
             
             # Track context for caching analysis
             req_cached, req_hash = context_cache.track_content('requirements', requirements, turn)
@@ -1256,8 +1348,24 @@ def main():
             min_context_fast_fail_retry = (last_skip_reason == "fast-fail")
 
             player_input = (
-                f"REQUIREMENTS:\n{requirements}\n\nSPECIFICATION:\n{specification}\n\n"
+                f"REQUIREMENTS:\n{requirements}\n\n"
+                f"SPECIFICATION:\n{spec_for_prompt}\n\n"
+                f"SPEC PROGRESS:\n"
+                f"- mode: {spec_prog.get('mode')}\n"
+                f"- complete: {spec_prog.get('complete')}\n"
+                f"- total_items: {spec_prog.get('total_items')}\n"
+                f"- remaining_items: {len(spec_prog.get('remaining_items') or [])}\n"
+                + (f"- hint: {spec_prog.get('hint')}\n" if spec_prog.get('hint') else "")
+                + "\n"
                 f"FEEDBACK FROM PREVIOUS TURN:\n{feedback_for_player}"
+            )
+
+            # Hard rule: success is only allowed when the specification is explicitly marked complete.
+            player_input += (
+                "\n\nSUCCESS CRITERIA (MANDATORY):\n"
+                "- Do NOT claim the task is complete unless SPECIFICATION.md is marked complete.\n"
+                "- If items are done, mark them as completed in SPECIFICATION.md (checkboxes - [x]) or add 'Status: COMPLETE'.\n"
+                "- If you run verification only (0 edits), you MUST still update SPECIFICATION.md when appropriate to avoid wasted tokens."
             )
 
             if baseline_verify_cmds:
@@ -2024,7 +2132,15 @@ def main():
                 repo_file_tree = get_repo_file_tree(".", exclude_dirs, include_exts=include_exts)
             
             coach_input = (
-                f"REQUIREMENTS:\n{requirements}\n\nSPECIFICATION:\n{specification}\n\n"
+                f"REQUIREMENTS:\n{requirements}\n\nSPECIFICATION:\n{spec_for_prompt}\n\n"
+                f"SPEC PROGRESS (from orchestrator):\n"
+                f"- mode: {spec_prog.get('mode')}\n"
+                f"- complete: {spec_prog.get('complete')}\n"
+                f"- total_items: {spec_prog.get('total_items')}\n"
+                f"- remaining_items: {len(spec_prog.get('remaining_items') or [])}\n\n"
+                "COACH APPROVAL RULE (MANDATORY):\n"
+                "- Only set status=APPROVED if SPECIFICATION.md is explicitly marked complete (all checklist items checked or Status: COMPLETE).\n"
+                "- If work is complete but not marked, require updating SPECIFICATION.md (do NOT approve).\n\n"
                 f"ORCHESTRATOR SUMMARY:\n"
                 f"- edits_applied: {len(files_changed)}\n"
                 f"- edited_files: {json.dumps(files_changed, ensure_ascii=False)}\n"
@@ -2195,24 +2311,48 @@ def main():
             )
             
             if coach_status == "APPROVED":
-                # IMPORTANT: Coach approval may be for a verification-only turn (0 edits applied).
+                # Success is ONLY allowed when the specification is explicitly marked complete.
+                spec_now = load_file(spec_file)
+                spec_now_prog = _spec_progress(spec_now)
+                if not spec_now_prog.get("complete"):
+                    remaining = len(spec_now_prog.get("remaining_items") or [])
+                    reason = (
+                        f"Spec incomplete (mode={spec_now_prog.get('mode')}, remaining_items={remaining}). "
+                        "Do not declare success until SPECIFICATION.md is marked complete."
+                    )
+                    log_print(
+                        "[INCOMPLETE] Coach approved, but SPECIFICATION.md is not marked complete. " + reason,
+                        verbose=True,
+                        quiet=args.quiet,
+                    )
+
+                    # Force continued work (or fail if out of turns) with explicit instruction to mark spec.
+                    feedback = (
+                        "BLOCKER: You may not finish the run yet because SPECIFICATION.md is not marked complete. "
+                        "Update SPECIFICATION.md by checking off completed items (- [x]) or adding 'Status: COMPLETE'. "
+                        "If the work is complete, your task is to mark it complete in the spec so we stop wasting tokens."
+                    )
+                    if turn == max_turns:
+                        run_log.report(status="failed", message=reason)
+                        break
+                    turn += 1
+                    continue
+
+                # Spec is complete; now we may declare success.
                 if not made_changes:
                     log_print(
-                        "SUCCESS! Coach approved baseline verification (no edits applied).",
+                        "SUCCESS! Coach approved and SPECIFICATION is marked complete (no edits applied this turn).",
                         verbose=args.verbose,
-                        quiet=args.quiet
+                        quiet=args.quiet,
                     )
-                    run_log.report(
-                        status="success",
-                        message="Coach approved baseline verification (no changes applied; specification not modified).",
-                    )
+                    run_log.report(status="success", message="Coach approved; specification marked complete.")
                 else:
                     log_print(
-                        "SUCCESS! Coach approved the implementation.",
+                        "SUCCESS! Coach approved the implementation and SPECIFICATION is marked complete.",
                         verbose=args.verbose,
-                        quiet=args.quiet
+                        quiet=args.quiet,
                     )
-                    run_log.report(status="success", message="Coach approved implementation.")
+                    run_log.report(status="success", message="Coach approved implementation; specification marked complete.")
                 break
             
             # Handle replan request from Coach
