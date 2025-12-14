@@ -1254,6 +1254,9 @@ def main():
             # Reload specs/requirements to capture any updates (e.g. Player marking items DONE)
             requirements = load_file(requirements_file)
             specification = load_file(spec_file)
+            
+            if not specification.strip():
+                log_print("[WARN] SPECIFICATION.md is empty. Player may have pruned it completely.", verbose=True, quiet=args.quiet)
 
             # --- Player Turn ---
             log_print(f"[Player] Implementing...", verbose=args.verbose, quiet=args.quiet)

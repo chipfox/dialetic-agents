@@ -68,6 +68,10 @@ In the project directory you want to modify:
 - `--fast-fail`: Skip Coach review if verification commands fail (saves tokens/time).
 - `--auto-fix`: Automatically run `npm run lint -- --fix` (or similar) if available after Player edits.
 
+### Dynamic Spec Pruning
+
+The Player agent is instructed to automatically remove completed sections from `SPECIFICATION.md` (or mark them `[DONE]`) as it progresses. This keeps the context window small and prevents re-reading completed instructions.
+
 ### Verification flags
 
 - `--verify-cmd "<command>"` (repeatable)
