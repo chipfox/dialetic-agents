@@ -1442,6 +1442,10 @@ def get_llm_response(
             return None
         
         if run_log:
+            # Calculate context metrics
+            prompt_size_chars = len(input_text)
+            prompt_size_kb = prompt_size_chars / 1024
+            
             run_log.log_event(
                 turn_number=turn_number,
                 phase="loop" if turn_number > 0 else "architect",
@@ -1452,6 +1456,11 @@ def get_llm_response(
                 input_tokens_est=input_tokens_est,
                 output_tokens_est=output_tokens_est,
                 duration_s=duration_s,
+                details={
+                    "prompt_size_chars": prompt_size_chars,
+                    "prompt_size_kb": round(prompt_size_kb, 2),
+                    "token_efficiency": round(output_tokens_est / max(1, input_tokens_est), 3) if input_tokens_est > 0 else 0,
+                }
             )
             
         return result.stdout
@@ -2386,10 +2395,39 @@ def main():
                 # This prevents "invented" helper components that are never imported.
                 for nf in list(new_files_created):
                     if not _is_new_file_referenced(nf, player_data.get("files") or {}):
-                        file_write_errors.append(
+                        # Determine file pattern for better diagnostics
+                        normalized = nf.replace("\\", "/")
+                        file_pattern = "unknown"
+                        if "/api/" in normalized and normalized.endswith("route.ts"):
+                            file_pattern = "Next.js API route"
+                        elif "/app/" in normalized and "page." in normalized:
+                            file_pattern = "Next.js page route"
+                        else:
+                            file_pattern = "code file"
+                        
+                        error_msg = (
                             f"Refusing to create new file '{nf}': no import/reference found for it. "
                             "If you create a new file, you must also add/adjust an import that references it."
                         )
+                        file_write_errors.append(error_msg)
+                        
+                        # Log guardrail telemetry
+                        run_log.log_event(
+                            turn_number=turn,
+                            phase="loop",
+                            agent="system",
+                            model="guardrail",
+                            action="block_file_creation",
+                            result="rejected",
+                            details={
+                                "blocked_file": nf,
+                                "file_pattern": file_pattern,
+                                "guardrail_rule": "require_import_reference",
+                                "suggestion": "Create import/reference first, or file may be framework route"
+                            },
+                            error=error_msg
+                        )
+                        
                         # Remove from write set to avoid creating it.
                         try:
                             del player_data["files"][nf]
@@ -2577,14 +2615,41 @@ def main():
                     if cmd not in player_commands and cmd not in verify_commands:
                         verify_commands.append(cmd)
 
+            verification_start = time.time()
             for cmd in verify_commands:
+                cmd_start = time.time()
                 output, _code = run_command(cmd, args.command_shell)
+                cmd_duration = time.time() - cmd_start
+                
                 executed_commands.append(cmd)
                 # Truncate output to save tokens
                 trunc_out = truncate_output(output)
                 command_outputs += f"Command: {cmd}\nExit Code: {_code}\nOutput:\n{trunc_out}\n\n"
                 if _code != 0:
                     verification_errors.append(f"Command '{cmd}' failed with exit code {_code}")
+                
+                # WARNING: Slow verification command
+                if cmd_duration > 60:
+                    log_print(
+                        f"[WARNING] Slow verification: '{cmd}' took {cmd_duration:.1f}s",
+                        verbose=True, quiet=args.quiet
+                    )
+                    run_log.log_event(
+                        turn_number=turn,
+                        phase="loop",
+                        agent="system",
+                        model="monitor",
+                        action="warning",
+                        result="detected",
+                        details={
+                            "warning_type": "slow_verification",
+                            "command": cmd,
+                            "duration_s": round(cmd_duration, 2),
+                            "severity": "medium"
+                        }
+                    )
+            
+            total_verification_time = time.time() - verification_start
 
             if executed_commands:
                 log_print(
@@ -2593,7 +2658,7 @@ def main():
                     quiet=args.quiet,
                 )
 
-            # Log Player action
+            # Log Player action with comprehensive metrics
             run_log.log_event(
                 turn_number=turn,
                 phase="loop",
@@ -2607,6 +2672,19 @@ def main():
                     "file_ops_errors": len(file_ops_errors),
                     "commands_executed": len(executed_commands),
                     "verification_errors": len(verification_errors),
+                    "verification_time_s": round(total_verification_time, 2),
+                    # Loop health metrics
+                    "zero_edits_streak": zero_edits_streak,
+                    "fast_fail_retries_this_turn": fast_fail_retries_this_turn,
+                    "skipped_without_coach": skipped_without_coach,
+                    "made_changes": made_changes,
+                    # Player behavior analysis
+                    "attempted_files": len(player_data.get("files", {})),
+                    "attempted_file_ops": len(player_data.get("file_ops", [])),
+                    "attempted_commands": len(player_data.get("commands_to_run", [])),
+                    "has_thought_process": bool(player_data.get("thought_process")),
+                    # Action success rate
+                    "file_success_rate": round(len(files_changed) / max(1, len(player_data.get("files", {}))) if player_data.get("files") else 1.0, 2),
                 }
             )
 
@@ -2614,6 +2692,26 @@ def main():
             if args.fast_fail and verification_errors:
                 fast_fail_retries_this_turn += 1
                 bypass_fast_fail = fast_fail_retries_this_turn > int(getattr(args, "max_fast_fail_retries", 2))
+                
+                # WARNING: Fast-fail spiral detection
+                if fast_fail_retries_this_turn >= 3:
+                    log_print(
+                        f"[WARNING] Fast-fail spiral detected: {fast_fail_retries_this_turn} retries in this turn",
+                        verbose=True, quiet=args.quiet
+                    )
+                    run_log.log_event(
+                        turn_number=turn,
+                        phase="loop",
+                        agent="system",
+                        model="monitor",
+                        action="warning",
+                        result="detected",
+                        details={
+                            "warning_type": "fast_fail_spiral",
+                            "retry_count": fast_fail_retries_this_turn,
+                            "severity": "high"
+                        }
+                    )
 
                 if bypass_fast_fail:
                     log_print(
