@@ -11,6 +11,7 @@ import argparse
 import tempfile
 from pathlib import Path
 from datetime import datetime, timezone
+import getpass
 
 
 SUBPROCESS_TEXT_ENCODING = "utf-8"
@@ -52,7 +53,18 @@ def check_project_write_access(project_dir: Path):
         )
         return False, hint
     except OSError as e:
-        return False, f"Unable to write to project directory {project_dir}: {e}"
+        hint = f"Unable to write to project directory {project_dir}: {e}"
+        # Detect common protected folders (OneDrive, Desktop, Documents)
+        try:
+            pstr = str(project_dir).lower()
+            if "onedrive" in pstr or "desktop" in pstr or "documents" in pstr:
+                hint += (
+                    "\nNote: The repo path appears to be under a user-synced or protected folder (OneDrive/Desktop/Documents). "
+                    "These locations sometimes block programmatic writes; consider moving the repo to a non-synced path like C:\\dev\\YourRepo."
+                )
+        except Exception:
+            pass
+        return False, hint
 
 # Configuration
 MAX_TURNS = 10
@@ -128,6 +140,7 @@ class RunLog:
         self.architect_invoked = False
         self.errors = []
 
+
     def log_event(self, turn_number, phase, agent, model, action, result, 
                   input_tokens_est=0, output_tokens_est=0, duration_s=0, 
                   details=None, error=None):
@@ -153,6 +166,8 @@ class RunLog:
         self.turns.append(event)
         # Incrementally flush to file so watchers see live updates
         self._flush_log_to_file()
+
+
 
     def estimate_tokens(self, text):
         """Simple token estimate: ~4 chars ≈ 1 token."""
@@ -262,6 +277,8 @@ class RunLog:
             print("", file=sys.stderr)
 
 
+
+
 def log_print(message, verbose=False, quiet=False):
     """Print to stderr unless quiet is True. Verbose adds extra details."""
     if not quiet:
@@ -291,7 +308,12 @@ def safe_save_file(path, content):
         save_file(path, content)
         return True, ""
     except Exception as e:
-        return False, f"save_file failed for '{path}': {e}"
+        # Gather additional diagnostics to help pinpoint permission problems
+        try:
+            diag = _gather_write_diagnostics(path, e)
+        except Exception:
+            diag = f"Underlying error: {e}"
+        return False, f"save_file failed for '{path}': {e}\n{diag}"
 
 
 def _basic_balance_check_js_ts(text: str):
@@ -948,6 +970,44 @@ def _ensure_writable(path: str) -> None:
             os.chmod(path, os.stat(path).st_mode | stat.S_IWRITE)
     except Exception:
         pass
+
+
+def _gather_write_diagnostics(path: str, exc: Exception) -> str:
+    """Return a short diagnostic string with context when a write fails."""
+    out = []
+    try:
+        out.append(f"Current user: {getpass.getuser()}")
+    except Exception:
+        pass
+    try:
+        p = Path(path)
+        parent = p.parent if p.parent else Path(".")
+        out.append(f"Target path: {p}")
+        out.append(f"Parent exists: {parent.exists()}")
+        try:
+            mode = oct(parent.stat().st_mode & 0o777)
+            out.append(f"Parent mode (oct): {mode}")
+        except Exception:
+            pass
+        # Check quick writability probe
+        probe = parent / f".dialectical_write_probe_{int(time.time())}.tmp"
+        try:
+            with open(probe, "wb") as f:
+                f.write(b"ok")
+            probe.unlink(missing_ok=True)
+            out.append("Quick write probe: success")
+        except PermissionError as pe:
+            out.append(f"Quick write probe: PermissionError: {pe}")
+        except Exception as e:
+            out.append(f"Quick write probe: failed: {e}")
+    except Exception as e:
+        out.append(f"Diagnostics error: {e}")
+    # Add hint from known Windows Controlled Folder Access
+    if isinstance(exc, PermissionError) or "Permission" in str(exc):
+        out.append(
+            "Hint: On Windows this may be Controlled Folder Access (Windows Security > Ransomware protection)."
+        )
+    return "\n".join(out)
 
 
 def _rmtree_force(path: str) -> None:
@@ -1779,6 +1839,11 @@ def main():
         help="Max bytes per file included in context snapshots."
     )
     parser.add_argument(
+        "--check-writes",
+        action="store_true",
+        help="Perform a pre-flight write check (attempt to write probe file) and exit with diagnostics.",
+    )
+    parser.add_argument(
         "--context-max-files",
         type=int,
         default=DEFAULT_CONTEXT_MAX_FILES,
@@ -1880,6 +1945,11 @@ def main():
         run_log.report(status="failed", message=reason)
         log_path = run_log.write_log_file()
         log_print(f"Observability log: {log_path}", verbose=args.verbose, quiet=args.quiet)
+        return
+
+    if args.check_writes:
+        diag = _gather_write_diagnostics(str(Path.cwd()), PermissionError("write-check"))
+        log_print("Write diagnostics:\n" + diag, verbose=True, quiet=False)
         return
 
     try:
