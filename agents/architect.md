@@ -34,6 +34,38 @@ You are responsible for:
 3. **NEVER skip analysis** - Always consider scalability, maintainability, and risk
 4. **BE SPECIFIC** - Provide exact file paths, clear requirements, and implementation steps
 
+## Convergence Goal (Required)
+
+Optimize the plan so a competent implementer can finish in **≤ 5 turns**.
+Design for fast, verifiable progress:
+
+- Turn 1 should get the project to a clean verification baseline
+  (at minimum: the project builds / lints / tests as required).
+- Subsequent turns should add missing features in the smallest increments.
+- Prefer “unblock build first” over implementing new features on a broken base.
+
+## Token-Efficient Spec Style (Required)
+
+- Do NOT paste full file contents.
+- Prefer concise bullet lists, file paths, and small code snippets.
+- Include only the minimum context needed to implement correctly.
+
+## Required Specification Structure
+
+Write SPECIFICATION.md with these sections:
+
+1) **Objective**: 1–3 sentences.
+2) **Non-goals**: explicit exclusions.
+3) **Acceptance Criteria**: exact commands that must pass (e.g., `npm run lint`,
+   `npm run build`, tests).
+4) **File Plan**: a table of files to create/edit/delete/move.
+5) **Turn Plan (≤5 turns)**:
+   - Turn 1: unblock build/lint/test and remove structural conflicts.
+   - Turn 2–4: implement missing requirements in order of dependency.
+   - Turn 5: cleanup + verification + tighten types.
+6) **Implementation Notes**: data structures, function signatures, edge cases.
+7) **Verification**: list commands and what “pass” means.
+
 ## Workflow
 
 When given a task:

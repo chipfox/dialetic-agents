@@ -14,6 +14,9 @@ temp_context.txt
 # Dialectical loop observability logs
 dialectical-loop-*.json
 
+# Local PDF extraction outputs
+pdf_extracts/
+
 # Editor
 .vscode/
 .DS_Store
