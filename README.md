@@ -55,7 +55,19 @@ In the project directory you want to modify:
 - `--requirements-file REQUIREMENTS.md`
 - `--spec-file SPECIFICATION.md`
 - `--skip-architect`
-- `--verbosity {quiet,normal,verbose}` (default: normal)
+- `--quiet` (minimal output)
+- `--verbose` (debug output)
+
+### Token-saving flags
+
+- `--context-mode {auto,snapshot,git-changed}`
+  - `auto` (default): snapshot on turn 1, then only git-changed files
+- `--context-max-bytes N`, `--context-max-file-bytes N`, `--context-max-files N`
+
+### Verification flags
+
+- `--verify-cmd "<command>"` (repeatable)
+- `--no-auto-verify`
 
 ### Model selection (Architect, Player, Coach)
 
@@ -109,19 +121,17 @@ Every time you run the script, it automatically writes a **JSON observability lo
 - **Summary stats**: total turns, total tokens, approval/rejection counts, any errors.
 - **Alerts**: if a loop gets stuck rejecting, or tokens are unexpectedly high.
 
-### Verbosity levels
-
-Control detail depth without changing behavior:
+### Output modes
 
 ```bash
 # Quiet: minimal output (only summary + log file path)
-python ~/.claude/skills/dialectical-loop/scripts/dialectical_loop.py --max-turns 10 --verbosity quiet
+python ~/.claude/skills/dialectical-loop/scripts/dialectical_loop.py --max-turns 10 --quiet
 
 # Normal (default): one-line-per-turn feedback + summary
 python ~/.claude/skills/dialectical-loop/scripts/dialectical_loop.py --max-turns 10
 
 # Verbose: detailed debugging output (includes snippets)
-python ~/.claude/skills/dialectical-loop/scripts/dialectical_loop.py --max-turns 10 --verbosity verbose
+python ~/.claude/skills/dialectical-loop/scripts/dialectical_loop.py --max-turns 10 --verbose
 ```
 
 ### Interpreting logs

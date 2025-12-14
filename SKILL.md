@@ -65,7 +65,20 @@ Run the installed loop script from the project directory you want to modify:
 - `--player-model MODEL`
 - `--coach-model MODEL`
 - `--verbose` — enable detailed output (prompts, responses, state)
-- `--silent` — suppress all terminal output except final summary and log path
+- `--quiet` — suppress all terminal output except final summary and log path
+
+### Token-saving / context controls
+
+- `--context-mode {auto,snapshot,git-changed}`
+  - `auto` (default): full snapshot on turn 1, then only git-changed files
+  - `snapshot`: snapshot up to limits every turn
+  - `git-changed`: only include files reported by `git status --porcelain`
+- `--context-max-bytes N`, `--context-max-file-bytes N`, `--context-max-files N`
+
+### Verification controls
+
+- `--verify-cmd "<command>"` (repeatable)
+- `--no-auto-verify` (disables auto `npm run lint` + `npm run build` when `package.json` exists)
 
 ## Recommended Copilot Models
 
@@ -121,9 +134,9 @@ Cost per 5-turn loop: ~79 cost units (2.1x Tier 1). Use for mission-critical or 
 
 The loop emits **structured observability** to help you monitor loop health and token usage:
 
-- **Output control** (set via `--verbose` and `--silent`):
+- **Output control** (set via `--verbose` and `--quiet`):
   - Default: Real-time per-turn updates to stderr (one line per agent action) + final summary.
-  - `--silent`: Only final summary (turn count, success/fail, errors) printed to stderr.
+  - `--quiet`: Only final summary (turn count, success/fail, errors) printed to stderr.
   - `--verbose`: All the above + detailed snippets of prompts, responses, and intermediate state (best for debugging).
 
 - **Observability log file**: A JSON file is automatically written to the project root with the name `dialectical-loop-TIMESTAMP.json`. This contains:
@@ -133,10 +146,10 @@ The loop emits **structured observability** to help you monitor loop health and 
 
 **Token estimates**: The orchestrator uses a simple heuristic (1 token ≈ 4 chars) to estimate token usage per turn. This helps you avoid runaway loops that burn tokens on trivial edits.
 
-### Example: silent mode (minimal output)
+### Example: quiet mode (minimal output)
 
 ```bash
-python ~/.claude/skills/dialectical-loop/scripts/dialectical_loop.py --max-turns 10 --silent
+python ~/.claude/skills/dialectical-loop/scripts/dialectical_loop.py --max-turns 10 --quiet
 ```
 
 Outputs only the final summary + log file path to stderr.

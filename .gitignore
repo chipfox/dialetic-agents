@@ -11,6 +11,9 @@ copilot-models.md
 # (Stored in OS temp dir at runtime, but keep generic ignores anyway)
 temp_context.txt
 
+# Dialectical loop observability logs
+dialectical-loop-*.json
+
 # Editor
 .vscode/
 .DS_Store

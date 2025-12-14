@@ -47,7 +47,12 @@ You must output your work in this exact JSON format (wrapped in a code block):
 
 ```json
 {
-  "thought_process": "Brief explanation of your changes.",
+  "thought_process": "One short sentence. NO newlines. Keep JSON-valid.",
+  "file_ops": [
+    {"op": "mkdir", "path": "scripts/legacy"},
+    {"op": "move", "from": "old/path.py", "to": "scripts/legacy/path.py"},
+    {"op": "delete", "path": "src/app/grant/[id]/page.tsx"}
+  ],
   "files": {
     "src/calculator.py": "Full content of the file...",
     "tests/test_calculator.py": "Full content of the file..."
@@ -62,6 +67,12 @@ You must output your work in this exact JSON format (wrapped in a code block):
 
 - Return exactly one fenced JSON block, nothing else. No prose, headings, or commentary before or after.
 - If you cannot complete the task, still emit valid JSON with an "error" note in `thought_process` and empty `files`/`commands_to_run`.
+
+### Critical Implementation Rules
+
+- You MUST implement by changing real files (via `file_ops` and `files`). Do not submit “plans” or code snippets.
+- Avoid multi-line strings in JSON fields. If you need to communicate multi-line info, put it in file contents or command output.
+- Always run verification commands relevant to the repo (build/lint/tests). If a Node/Next.js repo, include `npm run lint` and `npm run build`.
 
 ## Instructions
 

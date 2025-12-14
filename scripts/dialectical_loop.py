@@ -1,5 +1,7 @@
 import os
+import re
 import json
+import shutil
 import subprocess
 import sys
 import time
@@ -15,6 +17,47 @@ SPECIFICATION_FILE = "SPECIFICATION.md"
 DEFAULT_COACH_MODEL = "claude-sonnet-4.5"
 DEFAULT_PLAYER_MODEL = "gemini-3-pro-preview"
 DEFAULT_ARCHITECT_MODEL = "claude-sonnet-4.5"
+
+DEFAULT_CONTEXT_EXTS = [
+    ".md",
+    ".txt",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".ini",
+    ".env",
+    ".py",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".css",
+    ".scss",
+    ".sql",
+    ".prisma",
+]
+
+DEFAULT_EXCLUDE_DIRS = {
+    ".git",
+    ".hg",
+    ".svn",
+    ".venv",
+    "venv",
+    "node_modules",
+    ".next",
+    "dist",
+    "build",
+    "out",
+    "coverage",
+    "__pycache__",
+}
+
+DEFAULT_CONTEXT_MAX_BYTES = 200_000
+DEFAULT_CONTEXT_MAX_FILE_BYTES = 30_000
+DEFAULT_CONTEXT_MAX_FILES = 60
+
+DEFAULT_CONTEXT_MODE = "auto"
 
 # Skill layout (repo root contains agents/ and scripts/)
 SKILL_ROOT = Path(__file__).resolve().parents[1]
@@ -180,9 +223,242 @@ def run_command(command):
         return (
             f"Command: {command}\nExit Code: {result.returncode}\n"
             f"Output:\n{result.stdout}\nError:\n{result.stderr}"
-        )
+        ), result.returncode
     except Exception as e:
-        return f"Error running command {command}: {e}"
+        return f"Error running command {command}: {e}", 1
+
+
+def _split_csv_arg(value):
+    if not value:
+        return []
+    items = [v.strip() for v in value.split(",")]
+    return [v for v in items if v]
+
+
+def _normalize_ext_list(exts):
+    normalized = []
+    for ext in exts:
+        if not ext:
+            continue
+        e = ext.strip()
+        if not e:
+            continue
+        if not e.startswith("."):
+            e = f".{e}"
+        normalized.append(e.lower())
+    return normalized
+
+
+def _should_exclude_dir(dirname, exclude_dirs):
+    return dirname in exclude_dirs
+
+
+def build_codebase_snapshot(
+    root_dir=".",
+    include_exts=None,
+    exclude_dirs=None,
+    max_total_bytes=DEFAULT_CONTEXT_MAX_BYTES,
+    max_file_bytes=DEFAULT_CONTEXT_MAX_FILE_BYTES,
+    max_files=DEFAULT_CONTEXT_MAX_FILES,
+):
+    include_exts = include_exts or DEFAULT_CONTEXT_EXTS
+    include_exts = set(_normalize_ext_list(include_exts))
+    exclude_dirs = exclude_dirs or DEFAULT_EXCLUDE_DIRS
+
+    included_files = []
+    total_bytes = 0
+    snapshot_parts = []
+
+    for root, dirs, files in os.walk(root_dir):
+        dirs[:] = [d for d in sorted(dirs) if not _should_exclude_dir(d, exclude_dirs)]
+        for filename in sorted(files):
+            path = Path(root) / filename
+            rel_path = os.path.relpath(path, root_dir)
+            ext = path.suffix.lower()
+            if ext not in include_exts:
+                continue
+
+            if len(included_files) >= max_files:
+                break
+            try:
+                size = path.stat().st_size
+            except OSError:
+                continue
+
+            if total_bytes >= max_total_bytes:
+                break
+
+            read_limit = min(max_file_bytes, max_total_bytes - total_bytes)
+            try:
+                with open(path, "rb") as f:
+                    data = f.read(read_limit)
+                content = data.decode("utf-8", errors="replace")
+            except OSError:
+                continue
+
+            header = f"\n--- {rel_path} ---\n"
+            snapshot_parts.append(header)
+            snapshot_parts.append(content)
+            if size > read_limit:
+                snapshot_parts.append("\n[TRUNCATED]\n")
+            included_files.append(rel_path)
+            total_bytes += len(header.encode("utf-8")) + len(data)
+
+        if len(included_files) >= max_files or total_bytes >= max_total_bytes:
+            break
+
+    meta = {
+        "included_files": included_files,
+        "total_bytes": total_bytes,
+        "max_total_bytes": max_total_bytes,
+        "max_file_bytes": max_file_bytes,
+        "max_files": max_files,
+        "truncated": total_bytes >= max_total_bytes or len(included_files) >= max_files,
+    }
+    return "".join(snapshot_parts), meta
+
+
+def _run_capture(argv, cwd="."):
+    try:
+        result = subprocess.run(
+            argv,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            shell=False,
+        )
+        return result.returncode, result.stdout, result.stderr
+    except Exception as e:
+        return 1, "", str(e)
+
+
+def get_git_changed_paths(repo_dir="."):
+    code, out, _err = _run_capture(["git", "status", "--porcelain"], cwd=repo_dir)
+    if code != 0:
+        return None
+
+    paths = []
+    for line in out.splitlines():
+        if not line.strip():
+            continue
+
+        payload = line[3:] if len(line) >= 4 else ""
+        if "->" in payload:
+            payload = payload.split("->", 1)[1]
+        path = payload.strip()
+        if path:
+            paths.append(path)
+    return paths
+
+
+def build_changed_files_snapshot(
+    changed_paths,
+    root_dir=".",
+    include_exts=None,
+    max_total_bytes=DEFAULT_CONTEXT_MAX_BYTES,
+    max_file_bytes=DEFAULT_CONTEXT_MAX_FILE_BYTES,
+    max_files=DEFAULT_CONTEXT_MAX_FILES,
+):
+    include_exts = include_exts or DEFAULT_CONTEXT_EXTS
+    include_exts = set(_normalize_ext_list(include_exts))
+
+    included_files = []
+    total_bytes = 0
+    snapshot_parts = []
+
+    for rel_path in changed_paths:
+        if len(included_files) >= max_files or total_bytes >= max_total_bytes:
+            break
+
+        path = Path(root_dir) / rel_path
+        ext = path.suffix.lower()
+        if ext not in include_exts:
+            continue
+        if not path.exists() or not path.is_file():
+            continue
+
+        try:
+            size = path.stat().st_size
+        except OSError:
+            continue
+
+        read_limit = min(max_file_bytes, max_total_bytes - total_bytes)
+        try:
+            with open(path, "rb") as f:
+                data = f.read(read_limit)
+            content = data.decode("utf-8", errors="replace")
+        except OSError:
+            continue
+
+        header = f"\n--- {rel_path} ---\n"
+        snapshot_parts.append(header)
+        snapshot_parts.append(content)
+        if size > read_limit:
+            snapshot_parts.append("\n[TRUNCATED]\n")
+        included_files.append(rel_path)
+        total_bytes += len(header.encode("utf-8")) + len(data)
+
+    meta = {
+        "included_files": included_files,
+        "total_bytes": total_bytes,
+        "max_total_bytes": max_total_bytes,
+        "max_file_bytes": max_file_bytes,
+        "max_files": max_files,
+        "truncated": total_bytes >= max_total_bytes or len(included_files) >= max_files,
+    }
+    return "".join(snapshot_parts), meta
+
+
+def apply_file_ops(file_ops):
+    """Apply basic filesystem operations (move/delete/mkdir).
+
+    Expected schema:
+      {"op": "move", "from": "a", "to": "b"}
+      {"op": "delete", "path": "a"}
+      {"op": "mkdir", "path": "a"}
+    """
+    if not file_ops:
+        return [], []
+
+    applied = []
+    errors = []
+
+    for op in file_ops:
+        if not isinstance(op, dict):
+            errors.append(f"Invalid file_op entry (not object): {op!r}")
+            continue
+        op_type = (op.get("op") or "").strip().lower()
+
+        try:
+            if op_type == "move":
+                src = op.get("from")
+                dst = op.get("to")
+                if not src or not dst:
+                    raise ValueError("move requires 'from' and 'to'")
+                os.makedirs(os.path.dirname(dst) or ".", exist_ok=True)
+                shutil.move(src, dst)
+                applied.append(f"move:{src}->{dst}")
+            elif op_type == "delete":
+                target = op.get("path")
+                if not target:
+                    raise ValueError("delete requires 'path'")
+                if os.path.isdir(target):
+                    shutil.rmtree(target)
+                elif os.path.exists(target):
+                    os.remove(target)
+                applied.append(f"delete:{target}")
+            elif op_type == "mkdir":
+                target = op.get("path")
+                if not target:
+                    raise ValueError("mkdir requires 'path'")
+                os.makedirs(target, exist_ok=True)
+                applied.append(f"mkdir:{target}")
+            else:
+                errors.append(f"Unknown op '{op_type}'")
+        except Exception as e:
+            errors.append(f"{op_type} failed: {e}")
+
+    return applied, errors
 
 def get_github_token():
     try:
@@ -333,31 +609,43 @@ def extract_json(text, run_log=None, turn_number=0, agent="unknown"):
         if candidate_text and candidate_text.strip():
             candidates.append(candidate_text.strip())
 
+    def normalize_candidate(candidate_text):
+        if not candidate_text:
+            return candidate_text
+        stripped = candidate_text.strip()
+        if stripped.lower().startswith("json\n"):
+            stripped = stripped.split("\n", 1)[1].lstrip()
+        return stripped
+
     # Prefer fenced JSON blocks first
-    for fence in ["```json", "```"]:
+    for fence in ["```json", "```JSON", "```"]:
         start = text.find(fence)
         while start != -1:
             block_start = start + len(fence)
             end = text.find("```", block_start)
             if end == -1:
                 break
-            add_candidate(text[block_start:end])
+            add_candidate(normalize_candidate(text[block_start:end]))
             start = text.find(fence, end + 3)
 
     # Add full text as a fallback
-    add_candidate(text)
+    add_candidate(normalize_candidate(text))
 
     # Add the first detected JSON object slice
     first_brace = text.find("{")
     last_brace = text.rfind("}")
     if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
-        add_candidate(text[first_brace : last_brace + 1])
+        add_candidate(normalize_candidate(text[first_brace : last_brace + 1]))
 
     for candidate in candidates:
         try:
             return json.loads(candidate)
         except json.JSONDecodeError:
-            continue
+            fixed = re.sub(r",\s*([}\]])", r"\1", candidate)
+            try:
+                return json.loads(fixed)
+            except json.JSONDecodeError:
+                continue
 
     # Log parse failure with raw response preview
     error_msg = f"Failed to parse JSON from {agent} response (turn {turn_number})"
@@ -371,7 +659,7 @@ def extract_json(text, run_log=None, turn_number=0, agent="unknown"):
             result="failed",
             error=error_msg,
             details={
-                "response_preview": text[:200] if len(text) > 200 else text,
+                "response_preview": text[:500] if len(text) > 500 else text,
                 "response_length": len(text),
                 "contains_brace": "{" in text,
                 "contains_bracket": "[" in text,
@@ -489,6 +777,51 @@ def main():
         action="store_true",
         help="Suppress all terminal output except final summary and log path."
     )
+    parser.add_argument(
+        "--context-exts",
+        default=",".join(DEFAULT_CONTEXT_EXTS),
+        help="Comma-separated file extensions to include in context snapshots."
+    )
+    parser.add_argument(
+        "--context-exclude-dirs",
+        default=",".join(sorted(DEFAULT_EXCLUDE_DIRS)),
+        help="Comma-separated directory names to exclude from snapshots."
+    )
+    parser.add_argument(
+        "--context-max-bytes",
+        type=int,
+        default=DEFAULT_CONTEXT_MAX_BYTES,
+        help="Max total bytes to include in context snapshots."
+    )
+    parser.add_argument(
+        "--context-max-file-bytes",
+        type=int,
+        default=DEFAULT_CONTEXT_MAX_FILE_BYTES,
+        help="Max bytes per file included in context snapshots."
+    )
+    parser.add_argument(
+        "--context-max-files",
+        type=int,
+        default=DEFAULT_CONTEXT_MAX_FILES,
+        help="Max number of files included in context snapshots."
+    )
+    parser.add_argument(
+        "--context-mode",
+        choices=["auto", "snapshot", "git-changed"],
+        default=DEFAULT_CONTEXT_MODE,
+        help="Context strategy: auto uses snapshot then git-changed when possible."
+    )
+    parser.add_argument(
+        "--verify-cmd",
+        action="append",
+        default=[],
+        help="Extra verification command to run after Player edits (repeatable)."
+    )
+    parser.add_argument(
+        "--no-auto-verify",
+        action="store_true",
+        help="Disable automatic verification (e.g., npm build/lint when package.json exists)."
+    )
     args = parser.parse_args()
     
     max_turns = args.max_turns
@@ -524,14 +857,28 @@ def main():
             log_print(f"Observability log: {log_path}", verbose=args.verbose, quiet=args.quiet)
             return
 
-        # Gather context
-        current_files = ""
-        for root, _, files in os.walk("."):
-            for file in files:
-                if file.endswith(".py") and "venv" not in root:
-                    path = os.path.join(root, file)
-                    content = load_file(path)
-                    current_files += f"\n--- {path} ---\n{content}\n"
+        include_exts = _split_csv_arg(args.context_exts)
+        exclude_dirs = set(_split_csv_arg(args.context_exclude_dirs))
+
+        if args.context_mode in {"snapshot", "auto"}:
+            current_files, _meta = build_codebase_snapshot(
+                root_dir=".",
+                include_exts=include_exts,
+                exclude_dirs=exclude_dirs,
+                max_total_bytes=args.context_max_bytes,
+                max_file_bytes=args.context_max_file_bytes,
+                max_files=args.context_max_files,
+            )
+        else:
+            changed_paths = get_git_changed_paths(repo_dir=".") or []
+            current_files, _meta = build_changed_files_snapshot(
+                changed_paths,
+                root_dir=".",
+                include_exts=include_exts,
+                max_total_bytes=args.context_max_bytes,
+                max_file_bytes=args.context_max_file_bytes,
+                max_files=args.context_max_files,
+            )
 
         if not specification.strip():
             if args.skip_architect:
@@ -586,6 +933,8 @@ def main():
             return
         
         feedback = "No feedback yet. This is the first turn."
+
+        auto_verify = not args.no_auto_verify
         
         for turn in range(1, max_turns + 1):
             log_print(f"Turn {turn}/{max_turns}", verbose=args.verbose, quiet=args.quiet)
@@ -597,17 +946,48 @@ def main():
                 f"FEEDBACK FROM PREVIOUS TURN:\n{feedback}"
             )
             
-            # Add current file context
-            current_files = ""
-            for root, _, files in os.walk("."):
-                for file in files:
-                    if file.endswith(".py") and "venv" not in root:
-                        path = os.path.join(root, file)
-                        content = load_file(path)
-                        current_files += f"\n--- {path} ---\n{content}\n"
-            
+            context_mode = args.context_mode
+            if context_mode == "auto" and turn > 1:
+                context_mode = "git-changed"
+
+            if context_mode == "git-changed":
+                changed_paths = get_git_changed_paths(repo_dir=".") or []
+                current_files, meta = build_changed_files_snapshot(
+                    changed_paths,
+                    root_dir=".",
+                    include_exts=include_exts,
+                    max_total_bytes=args.context_max_bytes,
+                    max_file_bytes=args.context_max_file_bytes,
+                    max_files=args.context_max_files,
+                )
+                if not current_files:
+                    current_files, meta = build_codebase_snapshot(
+                        root_dir=".",
+                        include_exts=include_exts,
+                        exclude_dirs=exclude_dirs,
+                        max_total_bytes=args.context_max_bytes,
+                        max_file_bytes=args.context_max_file_bytes,
+                        max_files=args.context_max_files,
+                    )
+            else:
+                current_files, meta = build_codebase_snapshot(
+                    root_dir=".",
+                    include_exts=include_exts,
+                    exclude_dirs=exclude_dirs,
+                    max_total_bytes=args.context_max_bytes,
+                    max_file_bytes=args.context_max_file_bytes,
+                    max_files=args.context_max_files,
+                )
+
             if current_files:
-                player_input += f"\n\nCURRENT CODEBASE:\n{current_files}"
+                trunc_note = " (TRUNCATED)" if meta.get("truncated") else ""
+                meta_files = len(meta["included_files"])
+                meta_bytes = meta["total_bytes"]
+                player_input += (
+                    "\n\nCURRENT CODEBASE"
+                    f"{trunc_note} [files={meta_files}, bytes={meta_bytes}]:"
+                    f"\n{current_files}"
+                )
 
             # Player
             player_response = get_llm_response(
@@ -636,12 +1016,32 @@ def main():
                 continue
             
             if args.verbose:
+                thought = (
+                    player_data.get("thought_process")
+                    or player_data.get("summary")
+                    or "N/A"
+                )
                 log_print(
-                    f"[Player] Thought: {player_data.get('thought_process', 'N/A')[:100]}...", 
+                    f"[Player] Thought: {thought}"[:120],
                     verbose=True,
                     quiet=args.quiet
                 )
             
+            # Apply File Ops (move/delete/mkdir)
+            file_ops_applied, file_ops_errors = apply_file_ops(player_data.get("file_ops"))
+            if file_ops_applied:
+                log_print(
+                    f"[Player] Applied {len(file_ops_applied)} file ops.",
+                    verbose=args.verbose,
+                    quiet=args.quiet,
+                )
+            if file_ops_errors:
+                log_print(
+                    f"[Player] File ops errors: {len(file_ops_errors)}",
+                    verbose=args.verbose,
+                    quiet=args.quiet,
+                )
+
             # Apply Edits
             files_changed = []
             if "files" in player_data:
@@ -656,14 +1056,29 @@ def main():
             
             # Run Commands
             command_outputs = ""
-            if "commands_to_run" in player_data:
-                for cmd in player_data["commands_to_run"]:
-                    output = run_command(cmd)
-                    command_outputs += output + "\n"
+            executed_commands = []
+            player_commands = list(player_data.get("commands_to_run", []))
+            for cmd in player_commands:
+                output, _code = run_command(cmd)
+                executed_commands.append(cmd)
+                command_outputs += output + "\n"
+
+            verify_commands = list(args.verify_cmd)
+            if auto_verify and Path("package.json").exists():
+                for cmd in ["npm run lint", "npm run build"]:
+                    if cmd not in player_commands and cmd not in verify_commands:
+                        verify_commands.append(cmd)
+
+            for cmd in verify_commands:
+                output, _code = run_command(cmd)
+                executed_commands.append(cmd)
+                command_outputs += output + "\n"
+
+            if executed_commands:
                 log_print(
-                    f"[Player] Executed {len(player_data['commands_to_run'])} commands.", 
+                    f"[Player] Executed {len(executed_commands)} commands.",
                     verbose=args.verbose,
-                    quiet=args.quiet
+                    quiet=args.quiet,
                 )
 
             # Log Player action
@@ -676,7 +1091,9 @@ def main():
                 result="success",
                 details={
                     "edits_applied": len(files_changed),
-                    "commands_executed": len(player_data.get("commands_to_run", [])),
+                    "file_ops_applied": len(file_ops_applied),
+                    "file_ops_errors": len(file_ops_errors),
+                    "commands_executed": len(executed_commands),
                 }
             )
 
@@ -688,15 +1105,42 @@ def main():
                 f"COMMAND OUTPUTS:\n{command_outputs}"
             )
             
-            # Add file context for Coach
-            current_files_new = ""
-            for root, _, files in os.walk("."):
-                for file in files:
-                    if file.endswith(".py") and "venv" not in root:
-                        path = os.path.join(root, file)
-                        content = load_file(path)
-                        current_files_new += f"\n--- {path} ---\n{content}\n"
-            coach_input += f"\n\nUPDATED CODEBASE:\n{current_files_new}"
+            if context_mode == "git-changed":
+                changed_paths = get_git_changed_paths(repo_dir=".") or []
+                current_files_new, meta_new = build_changed_files_snapshot(
+                    changed_paths,
+                    root_dir=".",
+                    include_exts=include_exts,
+                    max_total_bytes=args.context_max_bytes,
+                    max_file_bytes=args.context_max_file_bytes,
+                    max_files=args.context_max_files,
+                )
+                if not current_files_new:
+                    current_files_new, meta_new = build_codebase_snapshot(
+                        root_dir=".",
+                        include_exts=include_exts,
+                        exclude_dirs=exclude_dirs,
+                        max_total_bytes=args.context_max_bytes,
+                        max_file_bytes=args.context_max_file_bytes,
+                        max_files=args.context_max_files,
+                    )
+            else:
+                current_files_new, meta_new = build_codebase_snapshot(
+                    root_dir=".",
+                    include_exts=include_exts,
+                    exclude_dirs=exclude_dirs,
+                    max_total_bytes=args.context_max_bytes,
+                    max_file_bytes=args.context_max_file_bytes,
+                    max_files=args.context_max_files,
+                )
+            trunc_note = " (TRUNCATED)" if meta_new.get("truncated") else ""
+            meta_new_files = len(meta_new["included_files"])
+            meta_new_bytes = meta_new["total_bytes"]
+            coach_input += (
+                "\n\nUPDATED CODEBASE"
+                f"{trunc_note} [files={meta_new_files}, bytes={meta_new_bytes}]:"
+                f"\n{current_files_new}"
+            )
 
             # Coach
             coach_response = get_llm_response(
