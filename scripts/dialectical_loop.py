@@ -340,18 +340,34 @@ def build_codebase_snapshot(
     total_bytes = 0
     snapshot_parts = []
 
-    for root, dirs, files in os.walk(root_dir):
-        dirs[:] = [d for d in sorted(dirs) if not _should_exclude_dir(d, exclude_dirs)]
-        for filename in sorted(files):
-            path = Path(root) / filename
-            rel_path = os.path.relpath(path, root_dir)
+    # Try to use git ls-files first to respect .gitignore
+    git_files = []
+    try:
+        code, out, _ = _run_capture(["git", "ls-files"], cwd=root_dir)
+        if code == 0:
+            git_files = [f.strip() for f in out.splitlines() if f.strip()]
+    except Exception:
+        pass
+
+    if git_files:
+        # Use git file list
+        for rel_path in git_files:
+            path = Path(root_dir) / rel_path
+            
+            # Check exclusions manually just in case
+            parts = Path(rel_path).parts
+            if any(_should_exclude_dir(p, exclude_dirs) for p in parts):
+                continue
+                
             ext = path.suffix.lower()
             if ext not in include_exts:
                 continue
-
+            
             if len(included_files) >= max_files:
                 break
+            
             try:
+                if not path.exists(): continue
                 size = path.stat().st_size
             except OSError:
                 continue
@@ -374,9 +390,46 @@ def build_codebase_snapshot(
                 snapshot_parts.append("\n[TRUNCATED]\n")
             included_files.append(rel_path)
             total_bytes += len(header.encode("utf-8")) + len(data)
+            
+    else:
+        # Fallback to os.walk
+        for root, dirs, files in os.walk(root_dir):
+            dirs[:] = [d for d in sorted(dirs) if not _should_exclude_dir(d, exclude_dirs)]
+            for filename in sorted(files):
+                path = Path(root) / filename
+                rel_path = os.path.relpath(path, root_dir)
+                ext = path.suffix.lower()
+                if ext not in include_exts:
+                    continue
 
-        if len(included_files) >= max_files or total_bytes >= max_total_bytes:
-            break
+                if len(included_files) >= max_files:
+                    break
+                try:
+                    size = path.stat().st_size
+                except OSError:
+                    continue
+
+                if total_bytes >= max_total_bytes:
+                    break
+
+                read_limit = min(max_file_bytes, max_total_bytes - total_bytes)
+                try:
+                    with open(path, "rb") as f:
+                        data = f.read(read_limit)
+                    content = data.decode("utf-8", errors="replace")
+                except OSError:
+                    continue
+
+                header = f"\n--- {rel_path} ---\n"
+                snapshot_parts.append(header)
+                snapshot_parts.append(content)
+                if size > read_limit:
+                    snapshot_parts.append("\n[TRUNCATED]\n")
+                included_files.append(rel_path)
+                total_bytes += len(header.encode("utf-8")) + len(data)
+
+            if len(included_files) >= max_files or total_bytes >= max_total_bytes:
+                break
 
     meta = {
         "included_files": included_files,
@@ -994,6 +1047,11 @@ def main():
         action="store_true",
         help="Restrict Coach context to only files edited in the current turn (ignoring previous turns)."
     )
+    parser.add_argument(
+        "--fast-fail",
+        action="store_true",
+        help="Skip Coach review if verification commands fail (exit code != 0)."
+    )
     args = parser.parse_args()
     
     max_turns = args.max_turns
@@ -1263,6 +1321,8 @@ def main():
             # Run Commands
             command_outputs = ""
             executed_commands = []
+            verification_errors = []
+            
             player_commands = list(player_data.get("commands_to_run", []))
             for cmd in player_commands:
                 output, _code = run_command(cmd)
@@ -1280,6 +1340,8 @@ def main():
                 output, _code = run_command(cmd)
                 executed_commands.append(cmd)
                 command_outputs += output + "\n"
+                if _code != 0:
+                    verification_errors.append(f"Command '{cmd}' failed with exit code {_code}")
 
             if executed_commands:
                 log_print(
@@ -1301,8 +1363,36 @@ def main():
                     "file_ops_applied": len(file_ops_applied),
                     "file_ops_errors": len(file_ops_errors),
                     "commands_executed": len(executed_commands),
+                    "verification_errors": len(verification_errors),
                 }
             )
+
+            # Check for Fast Fail (Verification Failure)
+            if args.fast_fail and verification_errors:
+                log_print(f"[Fast Fail] Verification failed ({len(verification_errors)} errors). Skipping Coach.", verbose=args.verbose, quiet=args.quiet)
+                feedback = (
+                    "AUTOMATIC REJECTION (Fast Fail):\n"
+                    "The following verification commands failed:\n" + 
+                    "\n".join(f"- {e}" for e in verification_errors) + 
+                    "\n\nFULL COMMAND OUTPUT:\n" + command_outputs + 
+                    "\n\nYou must fix these errors before the Coach will review your code."
+                )
+                
+                # Log the skipped coach turn
+                run_log.log_event(
+                    turn_number=turn,
+                    phase="loop",
+                    agent="coach",
+                    model="system",
+                    action="fast_fail",
+                    result="success",
+                    details={
+                        "decision": "rejected",
+                        "reason": "verification_failed",
+                        "errors": verification_errors
+                    }
+                )
+                continue
 
             # --- Coach Turn ---
             log_print(f"[Coach] Reviewing...", verbose=args.verbose, quiet=args.quiet)
