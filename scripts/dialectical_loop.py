@@ -15,7 +15,6 @@ SPECIFICATION_FILE = "SPECIFICATION.md"
 DEFAULT_COACH_MODEL = "claude-sonnet-4.5"
 DEFAULT_PLAYER_MODEL = "gemini-3-pro-preview"
 DEFAULT_ARCHITECT_MODEL = "claude-sonnet-4.5"
-VERBOSITY_CHOICES = ["quiet", "normal", "verbose"]
 
 # Skill layout (repo root contains agents/ and scripts/)
 SKILL_ROOT = Path(__file__).resolve().parents[1]
@@ -33,8 +32,9 @@ def utc_now_iso():
 class RunLog:
     """Captures observability events for a dialectical loop run."""
 
-    def __init__(self, verbosity="normal"):
-        self.verbosity = verbosity
+    def __init__(self, verbose=False, silent=False):
+        self.verbose = verbose
+        self.silent = silent
         self.run_id = f"dialectical-loop-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
         self.timestamp_start = utc_now_iso()
         self.turns = []
@@ -104,7 +104,8 @@ class RunLog:
             "run_id": self.run_id,
             "timestamp_start": self.timestamp_start,
             "timestamp_end": utc_now_iso(),
-            "verbosity": self.verbosity,
+            "verbose": self.verbose,
+            "silent": self.silent,
             "turns": self.turns,
             "summary": self.get_summary(),
         }
@@ -129,7 +130,7 @@ class RunLog:
         coach_rejected = summary["coach_calls"]["rejected"]
         coach_errors = summary["coach_calls"]["errors"]
 
-        if self.verbosity in ["normal", "verbose"]:
+        if not self.silent:
             print("", file=sys.stderr)
             print("=" * 70, file=sys.stderr)
             print("DIALECTICAL LOOP SUMMARY", file=sys.stderr)
@@ -146,10 +147,9 @@ class RunLog:
             print("", file=sys.stderr)
 
 
-def log_print(message, verbosity="normal", threshold="normal"):
-    """Print to stderr if verbosity is at or above threshold."""
-    levels = {"quiet": 0, "normal": 1, "verbose": 2}
-    if levels.get(verbosity, 1) >= levels.get(threshold, 1):
+def log_print(message, verbose=False, silent=False):
+    """Print to stderr unless silent is True."""
+    if not silent:
         timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         print(f"[{timestamp}] {message}", file=sys.stderr)
 
@@ -395,8 +395,8 @@ def main():
     parser.add_argument("--coach-model", default=DEFAULT_COACH_MODEL, help="Model to use for Coach reviews.")
     parser.add_argument("--player-model", default=DEFAULT_PLAYER_MODEL, help="Model to use for Player implementation.")
     parser.add_argument("--architect-model", default=DEFAULT_ARCHITECT_MODEL, help="Model to use for Architect planning.")
-    parser.add_argument("--verbosity", choices=VERBOSITY_CHOICES, default="normal", 
-                       help="Observability verbosity: quiet (minimal), normal (per-turn), verbose (detailed).")
+    parser.add_argument("--verbose", action="store_true", help="Enable verbose output (details on prompts, responses, state).")
+    parser.add_argument("--silent", action="store_true", help="Suppress all terminal output except final summary and log path.")
     args = parser.parse_args()
     
     max_turns = args.max_turns
@@ -405,9 +405,9 @@ def main():
         return
 
     # Initialize observability
-    run_log = RunLog(verbosity=args.verbosity)
-    log_print(f"Starting Dialectical Autocoding Loop (max_turns={max_turns}, verbosity={args.verbosity})", 
-              verbosity=args.verbosity, threshold="normal")
+    run_log = RunLog(verbose=args.verbose, silent=args.silent)
+    log_print(f"Starting Dialectical Autocoding Loop (max_turns={max_turns}, verbose={args.verbose}, silent={args.silent})", 
+              verbose=args.verbose, silent=args.silent)
 
     requirements_file = args.requirements_file
     spec_file = args.spec_file
