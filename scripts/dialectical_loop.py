@@ -855,7 +855,7 @@ def run_architect_phase(
     verbose=False,
     quiet=False
 ):
-    log_print(f"Architect is analyzing requirements...", verbose=verbose, quiet=quiet)
+    log_print(f"Architect ({architect_model}) is analyzing requirements...", verbose=verbose, quiet=quiet)
     architect_prompt = load_file(str(AGENT_DIR / "architect.md"))
     if not architect_prompt.strip():
         print(f"Error: Missing architect prompt at {AGENT_DIR / 'architect.md'}")
@@ -1259,7 +1259,7 @@ def main():
                 log_print("[WARN] SPECIFICATION.md is empty. Player may have pruned it completely.", verbose=True, quiet=args.quiet)
 
             # --- Player Turn ---
-            log_print(f"[Player] Implementing...", verbose=args.verbose, quiet=args.quiet)
+            log_print(f"[Player] ({args.player_model}) Implementing...", verbose=args.verbose, quiet=args.quiet)
             player_input = (
                 f"REQUIREMENTS:\n{requirements}\n\nSPECIFICATION:\n{specification}\n\n"
                 f"FEEDBACK FROM PREVIOUS TURN:\n{feedback}"
@@ -1496,7 +1496,7 @@ def main():
                 continue
 
             # --- Coach Turn ---
-            log_print(f"[Coach] Reviewing...", verbose=args.verbose, quiet=args.quiet)
+            log_print(f"[Coach] ({args.coach_model}) Reviewing...", verbose=args.verbose, quiet=args.quiet)
             coach_input = (
                 f"REQUIREMENTS:\n{requirements}\n\nSPECIFICATION:\n{specification}\n\n"
                 f"PLAYER OUTPUT:\n{json.dumps(player_data, indent=2)}\n\n"
