@@ -955,6 +955,45 @@ def detect_verification_commands(root_dir="."):
             
     return commands
 
+def detect_auto_fix_commands(root_dir="."):
+    """Detect available auto-fix/formatting commands."""
+    commands = []
+    root = Path(root_dir)
+    
+    pkg_json = root / "package.json"
+    if pkg_json.exists():
+        try:
+            with open(pkg_json, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                scripts = data.get("scripts", {})
+                
+                # Prefer explicit fix scripts
+                if "lint:fix" in scripts:
+                    commands.append("npm run lint:fix")
+                elif "format" in scripts:
+                    commands.append("npm run format")
+                elif "lint" in scripts:
+                    # Try appending --fix to standard lint
+                    commands.append("npm run lint -- --fix")
+        except Exception:
+            pass
+            
+    return commands
+
+def truncate_output(output, max_chars=2000):
+    """Smart truncation of command output to save tokens."""
+    if not output or len(output) <= max_chars:
+        return output
+    
+    # Keep head and tail
+    head_size = max_chars // 3
+    tail_size = max_chars - head_size
+    
+    head = output[:head_size]
+    tail = output[-tail_size:]
+    
+    return f"{head}\n... [OUTPUT TRUNCATED {len(output) - max_chars} CHARS] ...\n{tail}"
+
 def main():
     configure_stdio_utf8()
     parser = argparse.ArgumentParser(
@@ -1051,6 +1090,11 @@ def main():
         "--fast-fail",
         action="store_true",
         help="Skip Coach review if verification commands fail (exit code != 0)."
+    )
+    parser.add_argument(
+        "--auto-fix",
+        action="store_true",
+        help="Attempt to run auto-fixers (e.g. 'npm run lint -- --fix') after Player edits."
     )
     args = parser.parse_args()
     
@@ -1307,6 +1351,18 @@ def main():
                     quiet=args.quiet
                 )
             
+            # Auto-Fix (if enabled)
+            if args.auto_fix and files_changed:
+                fix_cmds = detect_auto_fix_commands(".")
+                if fix_cmds:
+                    log_print(f"[Auto-Fix] Running {len(fix_cmds)} fixers...", verbose=args.verbose, quiet=args.quiet)
+                    for cmd in fix_cmds:
+                        out, code = run_command(cmd)
+                        if code == 0:
+                            log_print(f"[Auto-Fix] '{cmd}' success.", verbose=args.verbose, quiet=args.quiet)
+                        else:
+                            log_print(f"[Auto-Fix] '{cmd}' failed (ignored).", verbose=args.verbose, quiet=args.quiet)
+
             # Check for "Lazy Player" (claims success but no edits)
             if not files_changed and not file_ops_applied and not player_data.get("commands_to_run"):
                 log_print("[Player] No actions taken (lazy turn).", verbose=args.verbose, quiet=args.quiet)
@@ -1327,7 +1383,9 @@ def main():
             for cmd in player_commands:
                 output, _code = run_command(cmd)
                 executed_commands.append(cmd)
-                command_outputs += output + "\n"
+                # Truncate output to save tokens
+                trunc_out = truncate_output(output)
+                command_outputs += f"Command: {cmd}\nExit Code: {_code}\nOutput:\n{trunc_out}\n\n"
 
             verify_commands = list(args.verify_cmd)
             if auto_verify:
@@ -1339,7 +1397,9 @@ def main():
             for cmd in verify_commands:
                 output, _code = run_command(cmd)
                 executed_commands.append(cmd)
-                command_outputs += output + "\n"
+                # Truncate output to save tokens
+                trunc_out = truncate_output(output)
+                command_outputs += f"Command: {cmd}\nExit Code: {_code}\nOutput:\n{trunc_out}\n\n"
                 if _code != 0:
                     verification_errors.append(f"Command '{cmd}' failed with exit code {_code}")
 

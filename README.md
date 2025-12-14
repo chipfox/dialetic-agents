@@ -65,6 +65,7 @@ In the project directory you want to modify:
 - `--context-max-bytes N`, `--context-max-file-bytes N`, `--context-max-files N`
 - `--coach-focus-recent`: Restrict Coach context to only files edited in the current turn (saves tokens).
 - `--fast-fail`: Skip Coach review if verification commands fail (saves tokens/time).
+- `--auto-fix`: Automatically run `npm run lint -- --fix` (or similar) if available after Player edits.
 
 ### Verification flags
 
