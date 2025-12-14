@@ -1375,8 +1375,27 @@ def main():
                         out, code = run_command(cmd)
                         if code == 0:
                             log_print(f"[Auto-Fix] '{cmd}' success.", verbose=args.verbose, quiet=args.quiet)
+                            run_log.log_event(
+                                turn_number=turn,
+                                phase="loop",
+                                agent="system",
+                                model="auto-fix",
+                                action="run_fixer",
+                                result="success",
+                                details={"command": cmd}
+                            )
                         else:
                             log_print(f"[Auto-Fix] '{cmd}' failed (ignored).", verbose=args.verbose, quiet=args.quiet)
+                            run_log.log_event(
+                                turn_number=turn,
+                                phase="loop",
+                                agent="system",
+                                model="auto-fix",
+                                action="run_fixer",
+                                result="failed",
+                                details={"command": cmd, "exit_code": code},
+                                error=out[:500]
+                            )
 
             # Check for "Lazy Player" (claims success but no edits)
             if not files_changed and not file_ops_applied and not player_data.get("commands_to_run"):
