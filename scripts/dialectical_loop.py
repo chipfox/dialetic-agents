@@ -1096,7 +1096,22 @@ def main():
         action="store_true",
         help="Attempt to run auto-fixers (e.g. 'npm run lint -- --fix') after Player edits."
     )
+    parser.add_argument(
+        "--lean-mode",
+        action="store_true",
+        help="Enable all token-saving features: --fast-fail, --coach-focus-recent, --auto-fix, and --context-mode auto."
+    )
     args = parser.parse_args()
+
+    # Apply lean-mode overrides
+    if args.lean_mode:
+        args.fast_fail = True
+        args.coach_focus_recent = True
+        args.auto_fix = True
+        # Only override context-mode if it's the default, to allow user override
+        if args.context_mode == DEFAULT_CONTEXT_MODE:
+            args.context_mode = "auto"
+
     
     max_turns = args.max_turns
     if max_turns < 1:

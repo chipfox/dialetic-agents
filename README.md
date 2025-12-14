@@ -60,6 +60,7 @@ In the project directory you want to modify:
 
 ### Token-saving flags
 
+- `--lean-mode`: **Recommended**. Activates all token-saving features (`--fast-fail`, `--coach-focus-recent`, `--auto-fix`, `--context-mode auto`).
 - `--context-mode {auto,snapshot,git-changed}`
   - `auto` (default): snapshot on turn 1, then only git-changed files
 - `--context-max-bytes N`, `--context-max-file-bytes N`, `--context-max-files N`

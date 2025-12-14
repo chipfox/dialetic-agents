@@ -69,6 +69,7 @@ Run the installed loop script from the project directory you want to modify:
 
 ### Token-saving / context controls
 
+- `--lean-mode`: **Recommended**. Activates all token-saving features (`--fast-fail`, `--coach-focus-recent`, `--auto-fix`, `--context-mode auto`).
 - `--context-mode {auto,snapshot,git-changed}`
   - `auto` (default): full snapshot on turn 1, then only git-changed files
   - `snapshot`: snapshot up to limits every turn
