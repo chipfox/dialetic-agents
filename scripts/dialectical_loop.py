@@ -307,7 +307,7 @@ def strip_fenced_block(text):
         return stripped.strip()
     return text
 
-def extract_json(text):
+def extract_json(text, run_log=None, turn_number=0, agent="unknown"):
     if not text:
         return None
 
@@ -343,7 +343,24 @@ def extract_json(text):
         except json.JSONDecodeError:
             continue
 
-    print("Failed to parse JSON from response.")
+    # Log parse failure with raw response preview
+    error_msg = f"Failed to parse JSON from {agent} response (turn {turn_number})"
+    if run_log:
+        run_log.log_event(
+            turn_number=turn_number,
+            phase="loop" if turn_number > 0 else "architect",
+            agent=agent,
+            model="unknown",
+            action="json_parse",
+            result="failed",
+            error=error_msg,
+            details={
+                "response_preview": text[:200] if len(text) > 200 else text,
+                "response_length": len(text),
+                "contains_brace": "{" in text,
+                "contains_bracket": "[" in text,
+            }
+        )
     return None
 
 def run_architect_phase(requirements, current_files, requirements_file, spec_file, architect_model, run_log=None, verbose=False, quiet=False):
@@ -514,11 +531,11 @@ def main():
                 log_print(f"[Player] No response.", verbose=args.verbose, quiet=args.quiet)
                 continue
 
-            player_data = extract_json(player_response)
+            player_data = extract_json(player_response, run_log=run_log, turn_number=turn, agent="player")
             
             if not player_data:
                 log_print(f"[Player] Invalid JSON output.", verbose=args.verbose, quiet=args.quiet)
-                feedback = "Your last response was not valid JSON. Please follow the format strictly."
+                feedback = "Your last response was not valid JSON. Response must be a valid JSON object. Please follow the format strictly and wrap output in {...} braces."
                 continue
             
             if args.verbose:
@@ -578,7 +595,7 @@ def main():
                 log_print(f"[Coach] No response.", verbose=args.verbose, quiet=args.quiet)
                 continue
 
-            coach_data = extract_json(coach_response)
+            coach_data = extract_json(coach_response, run_log=run_log, turn_number=turn, agent="coach")
             
             if not coach_data:
                 log_print(f"[Coach] Invalid JSON output.", verbose=args.verbose, quiet=args.quiet)
@@ -588,8 +605,12 @@ def main():
             coach_status = coach_data.get("status", "UNKNOWN")
             coach_feedback = coach_data.get("feedback", "")
             log_print(f"[Coach] Status: {coach_status}", verbose=args.verbose, quiet=args.quiet)
+            if args.verbose:
+                # Log first 200 chars of feedback in verbose mode
+                fb_preview = coach_feedback[:200] + "..." if len(coach_feedback) > 200 else coach_feedback
+                log_print(f"[Coach] Feedback: {fb_preview}", verbose=True, quiet=args.quiet)
 
-            # Log Coach decision
+            # Log Coach decision with full feedback for debugging
             run_log.log_event(
                 turn_number=turn,
                 phase="loop",
@@ -600,6 +621,7 @@ def main():
                 details={
                     "decision": "approved" if coach_status == "APPROVED" else "rejected",
                     "reason_length": len(coach_feedback),
+                    "feedback_text": coach_feedback,
                 }
             )
             
