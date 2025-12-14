@@ -871,8 +871,19 @@ def _is_new_file_referenced(new_file: str, edited_file_contents: dict[str, str])
 
     Accept if:
     - any current edited file contains an import specifier for it, OR
-    - git grep finds an existing import/reference in the repo.
+    - git grep finds an existing import/reference in the repo, OR
+    - the file matches a framework convention (e.g., Next.js API routes, page routes).
     """
+    # Framework convention: Next.js API routes (app/api/**/route.ts) and page routes (app/**/page.tsx)
+    # These files are discovered via file-system routing and don't need explicit imports
+    normalized = new_file.replace("\\", "/")
+    if re.match(r"^(src/)?(app/api/.+/route\.(ts|js)x?)$", normalized):
+        return True  # Next.js API route
+    if re.match(r"^(src/)?(app/.+/page\.(tsx|jsx))$", normalized):
+        return True  # Next.js page route
+    if re.match(r"^(src/)?(pages/.+\.(tsx|jsx|ts|js))$", normalized):
+        return True  # Next.js pages directory route
+    
     specs = _module_specifiers_for_file(new_file)
     # If no specs could be generated for a code file, be conservative (deny creation)
     # unless it's a non-code file (config, markdown, etc.)
@@ -1560,6 +1571,22 @@ def extract_json(text, run_log=None, turn_number=0, agent="unknown"):
 
     # Log parse failure with raw response preview
     error_msg = f"Failed to parse JSON from {agent} response (turn {turn_number})"
+    
+    # Detect if response appears truncated (ends mid-sentence or mid-word)
+    is_truncated = False
+    if text:
+        last_chars = text[-50:].strip()
+        # Check for incomplete JSON structures or mid-sentence cutoffs
+        if last_chars and not last_chars.endswith(("}", "]", '"', ".", "!", "?", ")", ";", ",")):
+            is_truncated = True
+        # Check if last brace/bracket is unclosed
+        open_count = text.count("{") - text.count("}")
+        if open_count > 0:
+            is_truncated = True
+    
+    if is_truncated:
+        error_msg += " (response appears truncated - LLM may have hit token limit)"
+    
     if run_log:
         run_log.log_event(
             turn_number=turn_number,
@@ -1574,6 +1601,7 @@ def extract_json(text, run_log=None, turn_number=0, agent="unknown"):
                 "response_length": len(text),
                 "contains_brace": "{" in text,
                 "contains_bracket": "[" in text,
+                "appears_truncated": is_truncated,
             }
         )
     return None
@@ -2251,11 +2279,31 @@ def main():
             )
             
             if not player_data:
-                log_print(f"[Player] Invalid JSON output.", verbose=args.verbose, quiet=args.quiet)
+                # Check if response appears truncated
+                is_truncated = False
+                if player_response:
+                    last_chars = player_response[-50:].strip()
+                    if last_chars and not last_chars.endswith(("}", "]", '"', ".", "!", "?", ")", ";", ",")):
+                        is_truncated = True
+                    open_count = player_response.count("{") - player_response.count("}")
+                    if open_count > 0:
+                        is_truncated = True
+                
+                truncation_hint = ""
+                if is_truncated:
+                    log_print(f"[Player] Invalid JSON output (response appears truncated).", verbose=args.verbose, quiet=args.quiet)
+                    truncation_hint = (
+                        "Your previous response appears to have been CUT OFF mid-response. "
+                        "This may indicate you hit a token limit. "
+                        "Please provide a COMPLETE, SHORTER response with valid JSON.\n"
+                    )
+                else:
+                    log_print(f"[Player] Invalid JSON output.", verbose=args.verbose, quiet=args.quiet)
 
                 # Attempt a single in-turn repair to avoid burning a full turn.
                 repair_input = (
                     "Your previous response was NOT valid JSON.\n"
+                    + truncation_hint +
                     "Return ONLY one fenced ```json code block with a single JSON object matching the required schema.\n"
                     "No prose, no markdown outside the code fence, no commentary.\n\n"
                     "PREVIOUS RESPONSE (for repair):\n"
