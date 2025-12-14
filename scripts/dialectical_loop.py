@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import ast
 import shutil
 import stat
 import subprocess
@@ -291,6 +292,130 @@ def safe_save_file(path, content):
         return True, ""
     except Exception as e:
         return False, f"save_file failed for '{path}': {e}"
+
+
+def _basic_balance_check_js_ts(text: str):
+    """Heuristic balance check for {}, (), [] in JS/TS/TSX.
+
+    Skips strings and comments; not a full parser, but catches common truncation.
+    Returns (ok, error_message).
+    """
+    if text is None:
+        return False, "content is None"
+
+    i = 0
+    n = len(text)
+    brace = paren = bracket = 0
+
+    in_squote = False
+    in_dquote = False
+    in_btick = False
+    in_line_comment = False
+    in_block_comment = False
+    escaped = False
+
+    while i < n:
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+
+        if in_line_comment:
+            if ch == "\n":
+                in_line_comment = False
+            i += 1
+            continue
+        if in_block_comment:
+            if ch == "*" and nxt == "/":
+                in_block_comment = False
+                i += 2
+                continue
+            i += 1
+            continue
+
+        if in_squote or in_dquote or in_btick:
+            if escaped:
+                escaped = False
+                i += 1
+                continue
+            if ch == "\\":
+                escaped = True
+                i += 1
+                continue
+            if in_squote and ch == "'":
+                in_squote = False
+            elif in_dquote and ch == '"':
+                in_dquote = False
+            elif in_btick and ch == "`":
+                in_btick = False
+            i += 1
+            continue
+
+        # Not in string/comment
+        if ch == "/" and nxt == "/":
+            in_line_comment = True
+            i += 2
+            continue
+        if ch == "/" and nxt == "*":
+            in_block_comment = True
+            i += 2
+            continue
+        if ch == "'":
+            in_squote = True
+            i += 1
+            continue
+        if ch == '"':
+            in_dquote = True
+            i += 1
+            continue
+        if ch == "`":
+            in_btick = True
+            i += 1
+            continue
+
+        if ch == "{":
+            brace += 1
+        elif ch == "}":
+            brace -= 1
+        elif ch == "(":
+            paren += 1
+        elif ch == ")":
+            paren -= 1
+        elif ch == "[":
+            bracket += 1
+        elif ch == "]":
+            bracket -= 1
+
+        if brace < 0 or paren < 0 or bracket < 0:
+            return False, "unbalanced delimiters (extra closing bracket/brace/paren)"
+
+        i += 1
+
+    if in_squote or in_dquote or in_btick:
+        return False, "unterminated string literal"
+    if in_block_comment:
+        return False, "unterminated block comment"
+    if brace != 0 or paren != 0 or bracket != 0:
+        return False, f"unbalanced delimiters: {{}}={brace}, ()={paren}, []={bracket}"
+    return True, ""
+
+
+def validate_source_text(path: str, content: str):
+    """Best-effort validation to avoid destructive truncation writes."""
+    try:
+        suffix = (Path(path).suffix or "").lower()
+    except Exception:
+        suffix = ""
+
+    if suffix == ".py":
+        try:
+            ast.parse(content or "")
+        except Exception as e:
+            return False, f"Python parse failed: {e}"
+        return True, ""
+
+    if suffix in {".js", ".jsx", ".ts", ".tsx"}:
+        return _basic_balance_check_js_ts(content or "")
+
+    return True, ""
 
 def _looks_like_unix_command(command: str) -> bool:
     cmd = (command or "").lstrip()
@@ -1533,11 +1658,34 @@ def main():
             
             if not player_data:
                 log_print(f"[Player] Invalid JSON output.", verbose=args.verbose, quiet=args.quiet)
-                feedback = (
-                    "Your last response was not valid JSON. Response must be a valid JSON object. "
-                    "Please follow the format strictly and wrap output in {...} braces."
+
+                # Attempt a single in-turn repair to avoid burning a full turn.
+                repair_input = (
+                    "Your previous response was NOT valid JSON.\n"
+                    "Return ONLY one fenced ```json code block with a single JSON object matching the required schema.\n"
+                    "No prose, no markdown outside the code fence, no commentary.\n\n"
+                    "PREVIOUS RESPONSE (for repair):\n"
+                    + truncate_output(player_response, max_chars=4000)
                 )
-                continue
+                repair_response = get_llm_response(
+                    player_prompt,
+                    repair_input,
+                    model=args.player_model,
+                    run_log=run_log,
+                    turn_number=turn,
+                    agent="player",
+                )
+                if repair_response:
+                    player_data = extract_json(
+                        repair_response, run_log=run_log, turn_number=turn, agent="player"
+                    )
+
+                if not player_data:
+                    feedback = (
+                        "Your last response was not valid JSON. Response must be a valid JSON object. "
+                        "Return ONLY one fenced ```json block containing a single JSON object."
+                    )
+                    continue
             
             if args.verbose:
                 thought = (
@@ -1571,6 +1719,13 @@ def main():
             file_write_errors = []
             if "files" in player_data:
                 for path, content in player_data["files"].items():
+                    ok_syntax, err_syntax = validate_source_text(path, content)
+                    if not ok_syntax:
+                        file_write_errors.append(
+                            f"Refusing to write '{path}': content failed validation ({err_syntax}). "
+                            "This usually means the model output is truncated; resend FULL file content."
+                        )
+                        continue
                     ok, err = safe_save_file(path, content)
                     if ok:
                         files_changed.append(path)
@@ -1741,6 +1896,10 @@ def main():
             
             coach_input = (
                 f"REQUIREMENTS:\n{requirements}\n\nSPECIFICATION:\n{specification}\n\n"
+                f"ORCHESTRATOR SUMMARY:\n"
+                f"- edits_applied: {len(files_changed)}\n"
+                f"- edited_files: {json.dumps(files_changed, ensure_ascii=False)}\n"
+                f"- file_write_errors: {len(file_write_errors) if 'file_write_errors' in locals() else 0}\n\n"
                 f"PLAYER OUTPUT:\n{json.dumps(player_data, ensure_ascii=False, separators=(',', ':'))}\n\n"
                 f"COMMAND OUTPUTS:\n{command_outputs}\n\n"
                 + (f"REPO FILE STRUCTURE (Names Only):\n{repo_file_tree}" if repo_file_tree else "")
