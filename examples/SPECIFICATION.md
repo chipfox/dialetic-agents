@@ -79,17 +79,20 @@ export interface User {
 ### Component Structure
 
 **ProfileCard.tsx:**
+
 - Props: `user: User`, `onEdit: () => void`
 - Displays user info in card layout with Edit button
 - Uses Tailwind CSS for styling
 
 **ProfileEditForm.tsx:**
+
 - Props: `user: User`, `onSave: (user: User) => void`, `onCancel: () => void`
 - Form inputs for name (max 50) and bio (max 200)
 - Client-side validation with error messages
 - Save and Cancel buttons
 
 **app/profile/page.tsx:**
+
 - useState for user data and edit mode
 - Toggles between ProfileCard and ProfileEditForm
 - Handles save operation and success message
@@ -133,4 +136,3 @@ Run these commands in order:
 - ✅ Validation prevents invalid data
 - ✅ Build and lint pass
 - ✅ Mobile responsive
-

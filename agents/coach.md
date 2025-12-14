@@ -109,7 +109,7 @@ You must output your review in this exact JSON format (wrapped in a code block):
 
 ```json
 {
-  "status": "APPROVED" | "REJECTED",
+  "status": "APPROVED" | "REJECTED" | "REPLAN_NEEDED",
   "compliance_score": <0-100>,
   "critical_issues": [
     "List of blocking issues that must be fixed"
@@ -118,6 +118,29 @@ You must output your review in this exact JSON format (wrapped in a code block):
   "next_steps": "Clear instructions for the Player's next turn."
 }
 ```
+
+### Status Values
+
+- **APPROVED**: All requirements met, verification passes, implementation complete.
+- **REJECTED**: Implementation has fixable issues that Player can address in next turn.
+- **REPLAN_NEEDED**: Fundamental design flaw detected that cannot be fixed incrementally within turn budget. Architect must revise SPECIFICATION.md.
+
+### When to Use REPLAN_NEEDED
+
+Use `REPLAN_NEEDED` when you detect any of:
+
+1. **Fundamental Architecture Mismatch**: The implementation reveals that the original design in SPECIFICATION.md is incompatible with the actual codebase structure, framework constraints, or requirements.
+2. **Wrong Approach**: The Player is consistently failing to make progress because the specified approach is technically infeasible or requires complete rework.
+3. **Requirements Misunderstanding**: The SPECIFICATION interprets REQUIREMENTS incorrectly in a way that cannot be patched incrementally.
+4. **Missing Critical Context**: The Architect designed the solution without accounting for crucial existing code patterns that make the current approach unworkable.
+
+**Important**: Only use REPLAN_NEEDED when the issue is truly unfixable within the bounded loop. If the Player can address the issue with focused edits in 1-2 turns, use REJECTED instead.
+
+When status is REPLAN_NEEDED, your `feedback` must:
+
+- Clearly explain WHY the current design is fundamentally flawed
+- Describe what the Architect missed or misunderstood
+- Suggest the high-level direction for the revised specification (but don't write the spec yourself)
 
 ### Required structure inside `feedback` and `next_steps`
 

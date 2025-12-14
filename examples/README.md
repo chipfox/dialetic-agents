@@ -15,27 +15,33 @@ This example demonstrates a typical 5-turn workflow implementing a user profile 
 ### Workflow Summary
 
 **Turn 0 (Architect):**
+
 - Generated detailed 5-turn implementation plan
 - Defined file structure and component architecture
 - Specified validation rules and acceptance criteria
 
 **Turn 1 (Player → Coach):**
+
 - Created type definitions and basic page structure
 - Coach blocked: Missing ProfileCard and ProfileEditForm components
 
 **Turn 2 (Player → Coach):**
+
 - Implemented both missing components
 - Coach blocked: Form validation not implemented
 
 **Turn 3 (Player → Coach):**
+
 - Added client-side validation logic
 - Coach blocked: Success message missing
 
 **Turn 4 (Player → Coach):**
+
 - Implemented success message with auto-dismiss
 - Coach blocked: SPECIFICATION.md not updated with progress markers
 
 **Turn 5 (Player → Coach):**
+
 - Updated SPECIFICATION.md with [DONE] markers
 - Coach approved: All acceptance criteria met ✅
 
@@ -52,6 +58,7 @@ This example demonstrates a typical 5-turn workflow implementing a user profile 
 ### Lessons from This Run
 
 **What Went Well:**
+
 - Architect provided clear, actionable 5-turn plan
 - Player implemented incrementally (one blocker per turn)
 - Coach feedback was specific and prioritized
@@ -59,6 +66,7 @@ This example demonstrates a typical 5-turn workflow implementing a user profile 
 - Verification passed on every turn
 
 **Token Optimizations Used:**
+
 - Lean mode enabled (--lean-mode)
 - Fast-fail optimization (skip Coach when verification fails)
 - Auto-context switching (full snapshot → git-changed)
@@ -66,6 +74,7 @@ This example demonstrates a typical 5-turn workflow implementing a user profile 
 - Specification pruning (removed completed details)
 
 **Convergence Pattern:**
+
 - Turn 1: Establish baseline (types + page)
 - Turn 2: Add UI components
 - Turn 3: Add validation logic
@@ -102,6 +111,7 @@ The JSON log contains:
 - **final_state** - Summary of completion status and approval reason
 
 Use the log to:
+
 - Debug why a run failed or got stuck
 - Optimize token usage by reviewing agent context sizes
 - Analyze convergence velocity and identify bottlenecks

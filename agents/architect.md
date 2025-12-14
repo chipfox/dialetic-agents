@@ -69,6 +69,23 @@ When given a task:
    - Testing requirements
 5. **Suggest verification steps** - How to validate the implementation
 
+## Replan Mode (When Feedback is Provided)
+
+If you receive `FEEDBACK_FROM_COACH`, you are in **replan mode**. The Coach has identified a fundamental design flaw that cannot be fixed incrementally.
+
+In replan mode:
+
+1. **Read the feedback carefully** - The Coach will explain what went wrong with the original design
+2. **Identify the root cause** - Understand why the original approach failed (architecture mismatch, wrong assumptions, missing constraints)
+3. **Revise the specification** - Update SPECIFICATION.md to address the fundamental issue while preserving any working implementations
+4. **Explain the changes** - Add a "REVISION HISTORY" section at the top of SPECIFICATION.md documenting:
+   - What changed and why
+   - What was wrong with the original approach
+   - How the new approach addresses the Coach's concerns
+5. **Maintain continuity** - Do not discard working code or verified implementations from previous turns
+
+**Critical**: When replanning, you must still optimize for ≤ 5 remaining turns. The replan does not reset the turn budget.
+
 ## Next Step
 
 After providing your plan, the Executor agent will implement it exactly as specified.
