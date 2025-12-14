@@ -2195,12 +2195,24 @@ def main():
             )
             
             if coach_status == "APPROVED":
-                log_print(
-                    "SUCCESS! Coach approved the implementation.",
-                    verbose=args.verbose,
-                    quiet=args.quiet
-                )
-                run_log.report(status="success", message="Coach approved implementation.")
+                # IMPORTANT: Coach approval may be for a verification-only turn (0 edits applied).
+                if not made_changes:
+                    log_print(
+                        "SUCCESS! Coach approved baseline verification (no edits applied).",
+                        verbose=args.verbose,
+                        quiet=args.quiet
+                    )
+                    run_log.report(
+                        status="success",
+                        message="Coach approved baseline verification (no changes applied; specification not modified).",
+                    )
+                else:
+                    log_print(
+                        "SUCCESS! Coach approved the implementation.",
+                        verbose=args.verbose,
+                        quiet=args.quiet
+                    )
+                    run_log.report(status="success", message="Coach approved implementation.")
                 break
             
             # Handle replan request from Coach
