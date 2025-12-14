@@ -26,6 +26,7 @@ from context_builder import (
     apply_file_ops,
     get_git_changed_paths,
     _gather_write_diagnostics,
+    _should_exclude_dir,
     DEFAULT_CONTEXT_EXTS,
     DEFAULT_EXCLUDE_DIRS,
     DEFAULT_CONTEXT_MAX_BYTES,
