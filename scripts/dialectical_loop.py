@@ -32,9 +32,9 @@ def utc_now_iso():
 class RunLog:
     """Captures observability events for a dialectical loop run."""
 
-    def __init__(self, verbose=False, silent=False):
+    def __init__(self, verbose=False, quiet=False):
         self.verbose = verbose
-        self.silent = silent
+        self.quiet = quiet
         self.run_id = f"dialectical-loop-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
         self.timestamp_start = utc_now_iso()
         self.turns = []
@@ -105,7 +105,7 @@ class RunLog:
             "timestamp_start": self.timestamp_start,
             "timestamp_end": utc_now_iso(),
             "verbose": self.verbose,
-            "silent": self.silent,
+            "quiet": self.quiet,
             "turns": self.turns,
             "summary": self.get_summary(),
         }
@@ -130,7 +130,7 @@ class RunLog:
         coach_rejected = summary["coach_calls"]["rejected"]
         coach_errors = summary["coach_calls"]["errors"]
 
-        if not self.silent:
+        if not self.quiet:
             print("", file=sys.stderr)
             print("=" * 70, file=sys.stderr)
             print("DIALECTICAL LOOP SUMMARY", file=sys.stderr)
@@ -147,11 +147,13 @@ class RunLog:
             print("", file=sys.stderr)
 
 
-def log_print(message, verbose=False, silent=False):
-    """Print to stderr unless silent is True."""
-    if not silent:
+def log_print(message, verbose=False, quiet=False):
+    """Print to stderr unless quiet is True. Verbose adds extra details."""
+    if not quiet:
         timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        print(f"[{timestamp}] {message}", file=sys.stderr)
+        prefix = "[VERBOSE]" if verbose else ""
+        prefix_str = f" {prefix}" if prefix else ""
+        print(f"[{timestamp}]{prefix_str} {message}", file=sys.stderr)
 
 def load_file(path):
     if not os.path.exists(path):
@@ -344,8 +346,8 @@ def extract_json(text):
     print("Failed to parse JSON from response.")
     return None
 
-def run_architect_phase(requirements, current_files, requirements_file, spec_file, architect_model, run_log=None, verbosity="normal"):
-    log_print(f"Architect is analyzing requirements...", verbosity=verbosity)
+def run_architect_phase(requirements, current_files, requirements_file, spec_file, architect_model, run_log=None, verbose=False, quiet=False):
+    log_print(f"Architect is analyzing requirements...", verbose=verbose, quiet=quiet)
     architect_prompt = load_file(str(AGENT_DIR / "architect.md"))
     if not architect_prompt.strip():
         print(f"Error: Missing architect prompt at {AGENT_DIR / 'architect.md'}")
@@ -361,7 +363,7 @@ def run_architect_phase(requirements, current_files, requirements_file, spec_fil
     if response:
         response = strip_fenced_block(response)
         if not response.strip():
-            log_print("Architect returned empty specification.", verbosity=verbosity)
+            log_print("Architect returned empty specification.", verbose=verbose, quiet=quiet)
             if run_log:
                 run_log.log_event(
                     turn_number=0, phase="architect", agent="architect", model=architect_model,
@@ -369,7 +371,7 @@ def run_architect_phase(requirements, current_files, requirements_file, spec_fil
                 )
             return None
         save_file(spec_file, response)
-        log_print(f"Generated {spec_file}", verbosity=verbosity)
+        log_print(f"Generated {spec_file}", verbose=verbose, quiet=quiet)
         if run_log:
             run_log.log_event(
                 turn_number=0, phase="architect", agent="architect", model=architect_model,
@@ -378,7 +380,7 @@ def run_architect_phase(requirements, current_files, requirements_file, spec_fil
             )
         return response
     else:
-        log_print("Architect failed to generate specification.", verbosity=verbosity)
+        log_print("Architect failed to generate specification.", verbose=verbose, quiet=quiet)
         if run_log:
             run_log.log_event(
                 turn_number=0, phase="architect", agent="architect", model=architect_model,
@@ -396,7 +398,7 @@ def main():
     parser.add_argument("--player-model", default=DEFAULT_PLAYER_MODEL, help="Model to use for Player implementation.")
     parser.add_argument("--architect-model", default=DEFAULT_ARCHITECT_MODEL, help="Model to use for Architect planning.")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose output (details on prompts, responses, state).")
-    parser.add_argument("--silent", action="store_true", help="Suppress all terminal output except final summary and log path.")
+    parser.add_argument("--quiet", action="store_true", help="Suppress all terminal output except final summary and log path.")
     args = parser.parse_args()
     
     max_turns = args.max_turns
@@ -405,9 +407,9 @@ def main():
         return
 
     # Initialize observability
-    run_log = RunLog(verbose=args.verbose, silent=args.silent)
-    log_print(f"Starting Dialectical Autocoding Loop (max_turns={max_turns}, verbose={args.verbose}, silent={args.silent})", 
-              verbose=args.verbose, silent=args.silent)
+    run_log = RunLog(verbose=args.verbose, quiet=args.quiet)
+    log_print(f"Starting Dialectical Autocoding Loop (max_turns={max_turns}, verbose={args.verbose}, quiet={args.quiet})", 
+              verbose=args.verbose, quiet=args.quiet)
 
     requirements_file = args.requirements_file
     spec_file = args.spec_file
@@ -419,10 +421,10 @@ def main():
         if not requirements.strip() and not specification.strip():
             error_msg = f"Error: Neither {requirements_file} nor {spec_file} found. Create one of them to proceed."
             print(error_msg)
-            log_print(error_msg, verbosity=args.verbosity, threshold="quiet")
+            log_print(error_msg, verbose=args.verbose, quiet=args.quiet)
             run_log.report(status="failed", message=error_msg)
             log_path = run_log.write_log_file()
-            log_print(f"Observability log: {log_path}", verbosity=args.verbosity, threshold="quiet")
+            log_print(f"Observability log: {log_path}", verbose=args.verbose, quiet=args.quiet)
             return
 
         # Gather context
@@ -438,18 +440,18 @@ def main():
             if args.skip_architect:
                 error_msg = f"Error: {spec_file} is missing and --skip-architect was provided."
                 print(error_msg)
-                log_print(error_msg, verbosity=args.verbosity, threshold="quiet")
+                log_print(error_msg, verbose=args.verbose, quiet=args.quiet)
                 run_log.report(status="failed", message=error_msg)
                 log_path = run_log.write_log_file()
-                log_print(f"Observability log: {log_path}", verbosity=args.verbosity, threshold="quiet")
+                log_print(f"Observability log: {log_path}", verbose=args.verbose, quiet=args.quiet)
                 return
             if not requirements.strip():
                 error_msg = f"Error: {spec_file} is missing and requirements are empty; cannot generate specification."
                 print(error_msg)
-                log_print(error_msg, verbosity=args.verbosity, threshold="quiet")
+                log_print(error_msg, verbose=args.verbose, quiet=args.quiet)
                 run_log.report(status="failed", message=error_msg)
                 log_path = run_log.write_log_file()
-                log_print(f"Observability log: {log_path}", verbosity=args.verbosity, threshold="quiet")
+                log_print(f"Observability log: {log_path}", verbose=args.verbose, quiet=args.quiet)
                 return
 
             specification = run_architect_phase(
@@ -459,18 +461,19 @@ def main():
                 spec_file,
                 architect_model=args.architect_model,
                 run_log=run_log,
-                verbosity=args.verbosity,
+                verbose=args.verbose,
+                quiet=args.quiet,
             )
             if not specification:
                 error_msg = "Aborting due to missing specification."
                 print(error_msg)
-                log_print(error_msg, verbosity=args.verbosity, threshold="quiet")
+                log_print(error_msg, verbose=args.verbose, quiet=args.quiet)
                 run_log.report(status="failed", message=error_msg)
                 log_path = run_log.write_log_file()
-                log_print(f"Observability log: {log_path}", verbosity=args.verbosity, threshold="quiet")
+                log_print(f"Observability log: {log_path}", verbose=args.verbose, quiet=args.quiet)
                 return
         else:
-            log_print(f"Using existing {spec_file}", verbosity=args.verbosity)
+            log_print(f"Using existing {spec_file}", verbose=args.verbose, quiet=args.quiet)
 
         coach_prompt = load_file(str(AGENT_DIR / "coach.md"))
         player_prompt = load_file(str(AGENT_DIR / "player.md"))
@@ -485,10 +488,10 @@ def main():
         feedback = "No feedback yet. This is the first turn."
         
         for turn in range(1, max_turns + 1):
-            log_print(f"Turn {turn}/{max_turns}", verbosity=args.verbosity, threshold="normal")
+            log_print(f"Turn {turn}/{max_turns}", verbose=args.verbose, quiet=args.quiet)
             
             # --- Player Turn ---
-            log_print(f"[Player] Implementing...", verbosity=args.verbosity, threshold="normal")
+            log_print(f"[Player] Implementing...", verbose=args.verbose, quiet=args.quiet)
             player_input = f"REQUIREMENTS:\n{requirements}\n\nSPECIFICATION:\n{specification}\n\nFEEDBACK FROM PREVIOUS TURN:\n{feedback}"
             
             # Add current file context
@@ -508,19 +511,19 @@ def main():
                                                run_log=run_log, turn_number=turn, agent="player")
             
             if not player_response:
-                log_print(f"[Player] No response.", verbosity=args.verbosity, threshold="normal")
+                log_print(f"[Player] No response.", verbose=args.verbose, quiet=args.quiet)
                 continue
 
             player_data = extract_json(player_response)
             
             if not player_data:
-                log_print(f"[Player] Invalid JSON output.", verbosity=args.verbosity, threshold="normal")
+                log_print(f"[Player] Invalid JSON output.", verbose=args.verbose, quiet=args.quiet)
                 feedback = "Your last response was not valid JSON. Please follow the format strictly."
                 continue
             
-            if args.verbosity == "verbose":
+            if args.verbose:
                 log_print(f"[Player] Thought: {player_data.get('thought_process', 'N/A')[:100]}...", 
-                         verbosity=args.verbosity, threshold="verbose")
+                         verbose=True, quiet=args.quiet)
             
             # Apply Edits
             files_changed = []
@@ -528,7 +531,7 @@ def main():
                 for path, content in player_data["files"].items():
                     save_file(path, content)
                     files_changed.append(path)
-                log_print(f"[Player] Applied {len(files_changed)} edits.", verbosity=args.verbosity, threshold="normal")
+                log_print(f"[Player] Applied {len(files_changed)} edits.", verbose=args.verbose, quiet=args.quiet)
             
             # Run Commands
             command_outputs = ""
@@ -537,7 +540,7 @@ def main():
                     output = run_command(cmd)
                     command_outputs += output + "\n"
                 log_print(f"[Player] Executed {len(player_data['commands_to_run'])} commands.", 
-                         verbosity=args.verbosity, threshold="normal")
+                         verbose=args.verbose, quiet=args.quiet)
 
             # Log Player action
             run_log.log_event(
@@ -554,7 +557,7 @@ def main():
             )
 
             # --- Coach Turn ---
-            log_print(f"[Coach] Reviewing...", verbosity=args.verbosity, threshold="normal")
+            log_print(f"[Coach] Reviewing...", verbose=args.verbose, quiet=args.quiet)
             coach_input = f"REQUIREMENTS:\n{requirements}\n\nSPECIFICATION:\n{specification}\n\nPLAYER OUTPUT:\n{json.dumps(player_data, indent=2)}\n\nCOMMAND OUTPUTS:\n{command_outputs}"
             
             # Add file context for Coach
@@ -572,19 +575,19 @@ def main():
                                               run_log=run_log, turn_number=turn, agent="coach")
             
             if not coach_response:
-                log_print(f"[Coach] No response.", verbosity=args.verbosity, threshold="normal")
+                log_print(f"[Coach] No response.", verbose=args.verbose, quiet=args.quiet)
                 continue
 
             coach_data = extract_json(coach_response)
             
             if not coach_data:
-                log_print(f"[Coach] Invalid JSON output.", verbosity=args.verbosity, threshold="normal")
+                log_print(f"[Coach] Invalid JSON output.", verbose=args.verbose, quiet=args.quiet)
                 feedback = "Coach failed to review. Proceeding with caution."
                 continue
             
             coach_status = coach_data.get("status", "UNKNOWN")
             coach_feedback = coach_data.get("feedback", "")
-            log_print(f"[Coach] Status: {coach_status}", verbosity=args.verbosity, threshold="normal")
+            log_print(f"[Coach] Status: {coach_status}", verbose=args.verbose, quiet=args.quiet)
 
             # Log Coach decision
             run_log.log_event(
@@ -601,26 +604,26 @@ def main():
             )
             
             if coach_status == "APPROVED":
-                log_print("SUCCESS! Coach approved the implementation.", verbosity=args.verbosity, threshold="normal")
+                log_print("SUCCESS! Coach approved the implementation.", verbose=args.verbose, quiet=args.quiet)
                 run_log.report(status="success", message="Coach approved implementation.")
                 break
                 
             feedback = coach_feedback
             
             if turn == max_turns:
-                log_print("Max turns reached.", verbosity=args.verbosity, threshold="normal")
+                log_print("Max turns reached.", verbose=args.verbose, quiet=args.quiet)
                 run_log.report(status="partial", message=f"Max turns ({max_turns}) reached without full approval.")
 
     except KeyboardInterrupt:
-        log_print("Loop interrupted by user.", verbosity=args.verbosity, threshold="quiet")
+        log_print("Loop interrupted by user.", verbose=args.verbose, quiet=False)
         run_log.report(status="interrupted", message="User interrupted the loop.")
     except Exception as e:
-        log_print(f"Unexpected error: {e}", verbosity=args.verbosity, threshold="quiet")
+        log_print(f"Unexpected error: {e}", verbose=args.verbose, quiet=False)
         run_log.report(status="error", message=str(e))
     finally:
         # Always write log file
         log_path = run_log.write_log_file()
-        log_print(f"Observability log saved: {log_path}", verbosity=args.verbosity, threshold="quiet")
+        log_print(f"Observability log saved: {log_path}", verbose=args.verbose, quiet=args.quiet)
 
 if __name__ == "__main__":
     main()
