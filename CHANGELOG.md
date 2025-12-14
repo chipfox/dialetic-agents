@@ -5,6 +5,25 @@ All notable changes to dialectical-loop will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2025-01-20
+
+### Added
+
+- TypeScript analyzer module (`scripts/ts_analyzer.py`) with optional import
+- Shared agent context documentation (`agents/_shared.md`)
+- Examples directory with sample REQUIREMENTS, SPECIFICATION, and run logs
+- Comprehensive example README explaining workflow patterns
+
+### Changed
+
+- Extracted 9 TypeScript-specific functions to separate module
+- Main orchestrator reduced by ~300 lines
+- Improved modularity for non-TypeScript projects
+
+### Fixed
+
+- Optional TS analyzer import allows graceful fallback when module unavailable
+
 ## [1.0.0] - 2025-01-20
 
 ### Added
