@@ -9,6 +9,7 @@ import sys
 import time
 import argparse
 import tempfile
+import traceback
 from pathlib import Path
 from datetime import datetime, timezone
 import getpass
@@ -310,7 +311,7 @@ def _spec_for_model(spec_text: str, spec_prog: dict, turn: int, max_chars: int =
     # Unknown/marker mode: keep truncated full spec so the model can decide how to mark completion.
     return truncate_output(text, max_chars=max_chars)
 
-def save_file(path, content):
+def save_file(path, content, *, run_log=None, verbose=False, quiet=False, turn_number=0):
     dirname = os.path.dirname(path)
     if dirname:
         os.makedirs(dirname, exist_ok=True)
@@ -322,9 +323,60 @@ def save_file(path, content):
     # Use atomic write: write to a temp file in the same dir then replace
     # Note: mkstemp creates file with 0o600 permissions by default
     fd, tmp_path = tempfile.mkstemp(dir=dirname or None)
+
+    def _log_write(op, outcome, error=None, diag=None, diag_perm=False):
+        msg = f"[Write] op={op} path={path} outcome={outcome}"
+        if error:
+            msg += f" err={error.__class__.__name__}: {error}"
+        if diag_perm:
+            msg += " diag_permission=True"
+        if diag:
+            msg += f" diag={str(diag)[:200]}"
+        log_print(msg, verbose=verbose, quiet=quiet)
+        if run_log:
+            run_log.log_event(
+                turn_number=turn_number,
+                phase="loop",
+                agent="system",
+                model="filesystem",
+                action="file_write",
+                result=outcome,
+                details={
+                    "path": path,
+                    "operation": op,
+                    "diag_permission": diag_perm,
+                    "error_class": error.__class__.__name__ if error else None,
+                    "error_message": str(error) if error else None,
+                },
+                error=str(error) if error else None,
+            )
+
+    def _record_first_permission(error, op, diag, diag_perm):
+        if run_log and not getattr(run_log, "first_permission_error", None):
+            tb = "".join(traceback.format_exception(type(error), error, error.__traceback__)[:3])
+            setattr(
+                run_log,
+                "first_permission_error",
+                {
+                    "path": path,
+                    "operation": op,
+                    "error_class": error.__class__.__name__,
+                    "error_message": str(error),
+                    "diag_permission": diag_perm,
+                    "diag": diag,
+                    "traceback_head": tb,
+                },
+            )
+            log_print(
+                f"[Warning] First PermissionError captured op={op} path={path}: {error}",
+                verbose=True,
+                quiet=quiet,
+            )
+
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(content)
+        _log_write("write_temp", "success")
         
         # On Windows, os.replace can fail if target exists and is in use or readonly.
         # We already tried _ensure_writable, but be robust against transient locks.
@@ -337,19 +389,33 @@ def save_file(path, content):
                 if os.path.exists(path):
                     try:
                         os.replace(tmp_path, path)
-                    except PermissionError:
+                        _log_write("replace", "success")
+                    except PermissionError as e:
                         # Fallback: try to remove target first (sometimes helps on Windows)
                         _ensure_writable(path)
                         try:
                             os.remove(path)
+                            _log_write("remove_target", "success")
                         except FileNotFoundError:
-                            pass
-                        os.replace(tmp_path, path)
+                            _log_write("remove_target", "skipped_missing")
+                        try:
+                            os.replace(tmp_path, path)
+                            _log_write("replace_after_remove", "success")
+                        except PermissionError as e_inner:
+                            diag, diag_perm = _gather_write_diagnostics(path, e_inner)
+                            _log_write("replace_after_remove", "error", error=e_inner, diag=diag, diag_perm=diag_perm)
+                            _record_first_permission(e_inner, "replace_after_remove", diag, diag_perm)
+                            last_exc = e_inner
+                            continue
                 else:
                     os.replace(tmp_path, path)
+                    _log_write("replace", "success_new")
                 last_exc = None
                 break
             except PermissionError as e:
+                diag, diag_perm = _gather_write_diagnostics(path, e)
+                _log_write("replace", "error", error=e, diag=diag, diag_perm=diag_perm)
+                _record_first_permission(e, "replace", diag, diag_perm)
                 last_exc = e
                 continue
         if last_exc is not None:
@@ -359,21 +425,39 @@ def save_file(path, content):
         if os.path.exists(tmp_path):
             try:
                 os.remove(tmp_path)
+                _log_write("cleanup_tmp", "success")
             except Exception:
                 pass
 
 
-def safe_save_file(path, content):
+def safe_save_file(path, content, *, run_log=None, verbose=False, quiet=False, turn_number=0):
     """Write a file and return (ok, error_message)."""
     try:
-        save_file(path, content)
+        save_file(path, content, run_log=run_log, verbose=verbose, quiet=quiet, turn_number=turn_number)
         return True, ""
     except Exception as e:
         # Gather additional diagnostics to help pinpoint permission problems
         try:
-            diag = _gather_write_diagnostics(path, e)
+            diag, diag_perm = _gather_write_diagnostics(path, e)
         except Exception:
-            diag = f"Underlying error: {e}"
+            diag, diag_perm = f"Underlying error: {e}", False
+        if run_log:
+            run_log.log_event(
+                turn_number=turn_number,
+                phase="loop",
+                agent="system",
+                model="filesystem",
+                action="file_write",
+                result="error",
+                details={
+                    "path": path,
+                    "operation": "save_file",
+                    "diag_permission": diag_perm,
+                    "error_class": e.__class__.__name__,
+                    "error_message": str(e),
+                },
+                error=str(e),
+            )
         return False, f"save_file failed for '{path}': {e}\n{diag}"
 
 
@@ -835,7 +919,14 @@ def run_architect_phase(
                     action="spec_generation", result="failed", error="Empty specification"
                 )
             return None
-        ok, err = safe_save_file(spec_file, response)
+        ok, err = safe_save_file(
+            spec_file,
+            response,
+            run_log=run_log,
+            verbose=verbose,
+            quiet=quiet,
+            turn_number=0,
+        )
         if not ok:
             log_print(f"[Architect] {err}", verbose=verbose, quiet=quiet)
             if run_log:
@@ -1229,7 +1320,7 @@ def main():
         return
 
     if args.check_writes:
-        diag = _gather_write_diagnostics(str(Path.cwd()), None)
+        diag, _ = _gather_write_diagnostics(str(Path.cwd()), None)
         log_print("Write diagnostics:\n" + diag, verbose=True, quiet=False)
         return
 
@@ -1700,7 +1791,14 @@ def main():
                             "This usually means the model output is truncated; resend FULL file content."
                         )
                         continue
-                    ok, err = safe_save_file(path, content)
+                    ok, err = safe_save_file(
+                        path,
+                        content,
+                        run_log=run_log,
+                        verbose=args.verbose,
+                        quiet=args.quiet,
+                        turn_number=turn,
+                    )
                     if ok:
                         files_changed.append(path)
                     else:
@@ -2351,7 +2449,14 @@ def main():
                 # Apply Coach's specification updates (if provided)
                 if coach_spec_updates:
                     try:
-                        ok, err = safe_save_file(spec_file, coach_spec_updates)
+                        ok, err = safe_save_file(
+                            spec_file,
+                            coach_spec_updates,
+                            run_log=run_log,
+                            verbose=args.verbose,
+                            quiet=args.quiet,
+                            turn_number=turn,
+                        )
                         if ok:
                             log_print(
                                 f"[Coach] Updated {spec_file} with completion markers.",

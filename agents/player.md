@@ -31,6 +31,7 @@ Treat the Coach feedback as a **delta** to close:
    - The environment automatically runs `npm run build` / `tsc` / `npm run lint` if detected.
    - You can rely on this for LSP-like feedback (type errors, lint warnings).
 4. **Minimalism**: Implement exactly what is asked. Do not over-engineer.
+5. **No unproven permission excuses**: Do **not** claim permission/restriction issues unless you have an actual `PermissionError` in command or save output. If you hit one, include the exact path/op and error text. If not, assume writes are allowed and keep editing.
 
 ## Convergence Goal (Required)
 
@@ -94,6 +95,7 @@ You must output your work in this exact JSON format (wrapped in a code block):
 - You MUST implement by changing real files (via `file_ops` and `files`). Do not submit “plans” or code snippets.
 - Avoid multi-line strings in JSON fields. If you need to communicate multi-line info, put it in file contents or command output.
 - Always run verification commands relevant to the repo (build/lint/tests). If a Node/Next.js repo, include `npm run lint` and `npm run build`.
+- When a pattern error appears (e.g., the same TypeScript property/type issue), **search and fix all occurrences in one turn**. Do not stop after the first file.
 
 ### Turn-by-turn behavior (Required)
 
@@ -102,8 +104,9 @@ You must output your work in this exact JSON format (wrapped in a code block):
 2) Do not claim something is fixed unless verification output proves it.
 3) If you cannot fix a blocker, reduce scope: make the smallest change that
   reveals a clearer error message and re-run verification.
-4) Update `addressed_issues` to explicitly map to the Coach’s `critical_issues`.
-5) Keep `remaining_risks` tightly scoped to the delta you did not close yet.
+4) If you suspect permissions, first attempt the edit and/or a tiny temp-file write in the target directory; only claim a block with logged evidence.
+5) Update `addressed_issues` to explicitly map to the Coach’s `critical_issues`.
+6) Keep `remaining_risks` tightly scoped to the delta you did not close yet.
 
 ## Instructions
 

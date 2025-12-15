@@ -70,9 +70,10 @@ def _ensure_writable(path: str) -> None:
         pass
 
 
-def _gather_write_diagnostics(path: str, exc: Exception | None) -> str:
-    """Return a short diagnostic string with context when a write fails."""
+def _gather_write_diagnostics(path: str, exc: Exception | None) -> tuple[str, bool]:
+    """Return diagnostics and whether a PermissionError was seen."""
     out = []
+    saw_permission = False
     try:
         out.append(f"Current user: {getpass.getuser()}")
     except Exception:
@@ -95,6 +96,7 @@ def _gather_write_diagnostics(path: str, exc: Exception | None) -> str:
             probe.unlink(missing_ok=True)
             out.append("Quick write probe: success")
         except PermissionError as pe:
+            saw_permission = True
             out.append(f"Quick write probe: PermissionError: {pe}")
         except Exception as e:
             out.append(f"Quick write probe: failed: {e}")
@@ -102,10 +104,11 @@ def _gather_write_diagnostics(path: str, exc: Exception | None) -> str:
         out.append(f"Diagnostics error: {e}")
     # Add hint from known Windows Controlled Folder Access
     if exc is not None and (isinstance(exc, PermissionError) or "Permission" in str(exc)):
+        saw_permission = True
         out.append(
             "Hint: On Windows this may be Controlled Folder Access (Windows Security > Ransomware protection)."
         )
-    return "\n".join(out)
+    return "\n".join(out), saw_permission
 
 
 def _rmtree_force(path: str) -> None:
