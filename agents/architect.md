@@ -48,13 +48,13 @@ Write SPECIFICATION.md with these sections:
    `npm run build`, tests).
 4) **File Plan**: a table of files to create/edit/delete/move.
 5) **Implementation Checklist**: Use markdown checkboxes for all implementation items.
-   
+
    **CRITICAL - Task Decomposition for Small Models**:
    - Each checklist item MUST be atomic (1-3 files, <5min work)
    - Break complex features into multiple small items
    - Each item should be completable in ONE Player turn
    - Be specific: include file paths and exact changes
-   
+
    ```markdown
    ✅ GOOD (atomic, specific):
    - [ ] Add User type to src/types/user.ts with id, name, email fields

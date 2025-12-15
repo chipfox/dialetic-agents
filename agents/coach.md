@@ -193,6 +193,7 @@ In `MINIMAL FIX PLAN`, keep it to 3–7 steps max. For small models, prefer 2-4 
 focused on ONE primary blocker.
 
 **Feedback Quality Checklist**:
+
 - [ ] Each blocker is numbered and atomic (1-3 files)
 - [ ] Evidence is cited with exact line numbers from command output
 - [ ] Fix order is prioritized (build → lint → test)
