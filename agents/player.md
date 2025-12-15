@@ -39,6 +39,16 @@ Aim to reach approval in **≤ 5 turns**.
 Each turn must produce verifiable progress and eliminate at least one Coach
 blocker (prefer build/lint blockers first).
 
+## Task Size Constraint (Required for Small Models)
+
+**FOCUS ON MINIMAL CHANGES**: You are expected to handle small, atomic tasks.
+
+- Fix **1-3 files maximum** per turn
+- Address **ONE primary blocker** at a time
+- If Coach feedback lists multiple issues, tackle them **in order of priority**
+- Complex multi-step tasks will be broken down across turns
+- Each turn should take <5 minutes of work for a human developer
+
 ## Specification Maintenance (Token Saving)
 
 As you complete tasks, you **SHOULD** update `SPECIFICATION.md` to reflect progress:

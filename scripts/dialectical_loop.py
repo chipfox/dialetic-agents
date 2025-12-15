@@ -906,7 +906,13 @@ def run_architect_phase(
     )
     architect_input += (
         "Output ONLY the markdown content of the specification file. "
-        "Do not wrap it in JSON."
+        "Do not wrap it in JSON.\n\n"
+        "TASK DECOMPOSITION REQUIREMENT:\n"
+        "Break implementation into small, atomic tasks (1-3 files each).\n"
+        "Format tasks as a checklist with specific, actionable items.\n"
+        "Each task should be completable by a small model in one focused turn.\n"
+        "Example: '- [ ] Add User type to src/types/user.ts with id, name, email fields'\n"
+        "NOT: '- [ ] Implement user management system'\n"
     )
 
     architect_max_tokens = 8000
@@ -2437,9 +2443,15 @@ def main():
                 continue
             
             coach_status = coach_data.get("status", "UNKNOWN")
-            coach_feedback = coach_data.get("feedback", "")
+            coach_feedback_raw = coach_data.get("feedback", "")
             coach_spec_updates = coach_data.get("specification_updates", "")
+            
+            # Decompose feedback into focused, bite-sized tasks for tiny models
+            coach_feedback, deferred_tasks = decompose_feedback_into_tasks(coach_feedback_raw, max_tasks_per_turn=3)
+            
             log_print(f"[Coach] Status: {coach_status}", verbose=args.verbose, quiet=args.quiet)
+            if deferred_tasks:
+                log_print(f"[Coach] Decomposed feedback: {len(deferred_tasks)} items deferred to future turns", verbose=True, quiet=args.quiet)
             if args.verbose:
                 # Log first 200 chars of feedback in verbose mode
                 fb_preview = (
@@ -2447,9 +2459,9 @@ def main():
                 )
                 log_print(f"[Coach] Feedback: {fb_preview}", verbose=True, quiet=args.quiet)
             
-            # Parse Coach feedback for inter-agent communication metrics
-            mentioned_files = extract_file_mentions(coach_feedback)  # Update for next turn's Player tracking
-            action_items = len(re.findall(r'^\d+\.', coach_feedback, re.MULTILINE))
+            # Parse Coach feedback for inter-agent communication metrics (use raw for full context)
+            mentioned_files = extract_file_mentions(coach_feedback_raw)  # Update for next turn's Player tracking
+            action_items = len(re.findall(r'^\d+\.', coach_feedback_raw, re.MULTILINE))
             
             feedback_metrics = {
                 "mentioned_files": mentioned_files,

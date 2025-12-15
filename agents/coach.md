@@ -118,6 +118,8 @@ If COMMAND OUTPUTS show a Next.js build failure:
 
 - Prefer 3–6 high-impact issues over 15 shallow ones.
 - Do not speculate about files you cannot see in UPDATED CODEBASE.
+- **Structure for decomposition**: Use numbered lists or "BLOCKER #N" format so the orchestrator can decompose complex feedback into bite-sized tasks for small models.
+- **Atomic tasks**: Each issue should be fixable in ONE focused edit (1-2 files max). If an issue requires multiple steps, break it into separate numbered items.
 - **Missing Files**: You will receive a `REPO FILE STRUCTURE` list. Use this to verify if required files exist, even if their content is not in the `UPDATED CODEBASE` snapshot. If a required file is missing from the structure, flag it as a blocker.
 - If UPDATED CODEBASE is truncated, say so and request a smaller, focused
   context strategy (e.g., only changed files) rather than guessing.
