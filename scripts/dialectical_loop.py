@@ -1094,6 +1094,78 @@ def extract_error_fingerprints(verification_output: str) -> set:
     
     return errors
 
+def decompose_feedback_into_tasks(feedback: str, max_tasks_per_turn: int = 3) -> tuple[str, list]:
+    """
+    Extract top priority tasks from Coach feedback for small model compatibility.
+    
+    Splits complex feedback into bite-sized, actionable tasks. Returns the top
+    N tasks as focused feedback string, plus any deferred tasks for future turns.
+    
+    Args:
+        feedback: Raw Coach feedback text (may contain numbered lists, BLOCKERS, etc.)
+        max_tasks_per_turn: Maximum tasks to include in current turn (default 3)
+    
+    Returns:
+        (focused_feedback, deferred_tasks):
+            - focused_feedback: Restructured feedback with top N tasks only
+            - deferred_tasks: List of task descriptions deferred to future turns
+    """
+    if not feedback or not feedback.strip():
+        return feedback, []
+    
+    # Extract numbered items or BLOCKER patterns
+    # Pattern 1: "1. Task description" or "BLOCKER #1: description"
+    # Pattern 2: "- [ ] Task" (checkbox format)
+    blocker_pattern = r'(?:BLOCKER #\d+|^\d+\.)\s*[:\-]?\s*(.+?)(?=(?:BLOCKER #\d+|^\d+\.)|$)'
+    checkbox_pattern = r'^-\s*\[\s*\]\s*(.+?)$'
+    
+    blockers = []
+    
+    # Try to find numbered blockers first
+    matches = re.findall(blocker_pattern, feedback, re.MULTILINE | re.DOTALL)
+    if matches:
+        # Clean up each match (remove extra whitespace, keep only first paragraph)
+        for match in matches:
+            cleaned = match.strip().split('\n\n')[0]  # First paragraph only
+            if cleaned and len(cleaned) > 10:  # Skip too-short items
+                blockers.append(cleaned)
+    
+    # If no numbered blockers found, try checkbox format
+    if not blockers:
+        for line in feedback.split('\n'):
+            match = re.match(checkbox_pattern, line.strip())
+            if match:
+                blockers.append(match.group(1).strip())
+    
+    # If still no structured tasks found, split by double newlines and take paragraphs
+    if not blockers:
+        paragraphs = [p.strip() for p in feedback.split('\n\n') if p.strip()]
+        # Filter for actionable paragraphs (contain keywords like "fix", "add", "update", etc.)
+        action_keywords = ['fix', 'add', 'update', 'create', 'remove', 'change', 'implement', 'must']
+        blockers = [p for p in paragraphs if any(kw in p.lower() for kw in action_keywords)]
+    
+    # Limit to max_tasks_per_turn
+    if len(blockers) <= max_tasks_per_turn:
+        # All tasks fit in current turn
+        return feedback, []
+    
+    # Split tasks: top N for current turn, rest deferred
+    current_tasks = blockers[:max_tasks_per_turn]
+    deferred = blockers[max_tasks_per_turn:]
+    
+    # Reconstruct focused feedback with only current tasks
+    focused_parts = []
+    focused_parts.append("PRIORITY BLOCKERS (address these first):\n")
+    for i, task in enumerate(current_tasks, 1):
+        focused_parts.append(f"{i}. {task}\n")
+    
+    if deferred:
+        focused_parts.append(f"\n({len(deferred)} additional items will be addressed in subsequent turns)")
+    
+    focused_feedback = "\n".join(focused_parts)
+    
+    return focused_feedback, deferred
+
 def calculate_feedback_coverage(mentioned_files: list, edited_files: list) -> float:
     """Calculate % of Coach-mentioned files that Player actually edited.
     

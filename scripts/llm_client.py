@@ -43,7 +43,12 @@ def get_llm_response(
     agent="unknown",
     max_tokens=8000
 ):
-    """Call Copilot with observability logging."""
+    """
+    Call Copilot CLI with observability logging.
+    
+    Note: max_tokens parameter is kept for backward compatibility but is not used,
+    as the copilot CLI does not expose a token limit option.
+    """
     token = os.environ.get("GITHUB_TOKEN") or get_github_token()
     if not token:
         print("Error: Could not find GITHUB_TOKEN. Please login with 'gh auth login'.")
@@ -82,8 +87,6 @@ def get_llm_response(
         "copilot",
         "--model",
         model,
-        "--max-tokens",
-        str(max_tokens),
         "--allow-all-paths",
         "--silent",
         "-p",
@@ -119,6 +122,12 @@ def get_llm_response(
         output_tokens_est = run_log.estimate_tokens(result.stdout) if run_log else 0
         
         if result.returncode != 0:
+            error_msg = f"Copilot CLI Error ({result.returncode})"
+            if result.stderr:
+                error_msg += f":\nSTDERR: {result.stderr}"
+            if result.stdout:
+                error_msg += f"\nSTDOUT: {result.stdout}"
+            
             if run_log:
                 run_log.log_event(
                     turn_number=turn_number,
@@ -130,9 +139,9 @@ def get_llm_response(
                     input_tokens_est=input_tokens_est,
                     output_tokens_est=0,
                     duration_s=duration_s,
-                    error=f"Copilot CLI Error ({result.returncode})"
+                    error=error_msg
                 )
-            print(f"Copilot CLI Error ({result.returncode}):\n{result.stderr}")
+            print(error_msg, file=sys.stderr)
             return None
         
         if run_log:
@@ -156,6 +165,12 @@ def get_llm_response(
                     "token_efficiency": round(output_tokens_est / max(1, input_tokens_est), 3) if input_tokens_est > 0 else 0,
                 }
             )
+        
+        # Check if response is empty
+        if not result.stdout or not result.stdout.strip():
+            print(f"WARNING: LLM returned empty response for agent={agent}, model={model}", file=sys.stderr)
+            if result.stderr:
+                print(f"STDERR was: {result.stderr}", file=sys.stderr)
             
         return result.stdout
     except Exception as e:
