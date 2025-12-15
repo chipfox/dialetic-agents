@@ -326,18 +326,34 @@ def save_file(path, content):
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(content)
         
-        # On Windows, os.replace fails if target exists and is in use or readonly.
-        # We already tried _ensure_writable, but let's be robust.
-        if os.path.exists(path):
+        # On Windows, os.replace can fail if target exists and is in use or readonly.
+        # We already tried _ensure_writable, but be robust against transient locks.
+        retry_delays_s = (0.0, 0.05, 0.2)
+        last_exc = None
+        for delay_s in retry_delays_s:
+            if delay_s:
+                time.sleep(delay_s)
             try:
-                os.replace(tmp_path, path)
-            except PermissionError:
-                # Fallback: try to remove target first (sometimes helps on Windows)
-                _ensure_writable(path)
-                os.remove(path)
-                os.replace(tmp_path, path)
-        else:
-            os.replace(tmp_path, path)
+                if os.path.exists(path):
+                    try:
+                        os.replace(tmp_path, path)
+                    except PermissionError:
+                        # Fallback: try to remove target first (sometimes helps on Windows)
+                        _ensure_writable(path)
+                        try:
+                            os.remove(path)
+                        except FileNotFoundError:
+                            pass
+                        os.replace(tmp_path, path)
+                else:
+                    os.replace(tmp_path, path)
+                last_exc = None
+                break
+            except PermissionError as e:
+                last_exc = e
+                continue
+        if last_exc is not None:
+            raise last_exc
             
     finally:
         if os.path.exists(tmp_path):
@@ -937,7 +953,8 @@ def extract_file_mentions(text: str) -> list:
     """
     if not text:
         return []
-    pattern = r'[\w/.-]+\.(?:ts|tsx|js|jsx|py|md|json|yaml|yml)'
+    # Prefer longer extensions first (e.g., .tsx before .ts) to avoid partial matches.
+    pattern = r'[\w/.-]+\.(?:tsx|ts|jsx|js|py|md|json|yaml|yml)'
     return list(set(re.findall(pattern, text)))
 
 def extract_error_fingerprints(verification_output: str) -> set:
@@ -975,8 +992,16 @@ def calculate_feedback_coverage(mentioned_files: list, edited_files: list) -> fl
     """
     if not mentioned_files:
         return 1.0  # No files mentioned = perfect coverage
-    mentioned_set = set(mentioned_files)
-    edited_set = set(edited_files)
+    def _norm(p: str) -> str:
+        if not p:
+            return ""
+        p = p.strip().replace("\\\\", "/")
+        if p.startswith("./"):
+            p = p[2:]
+        return p.lower()
+
+    mentioned_set = {_norm(p) for p in mentioned_files if p}
+    edited_set = {_norm(p) for p in edited_files if p}
     addressed = mentioned_set & edited_set
     return len(addressed) / len(mentioned_set)
 
@@ -1204,7 +1229,7 @@ def main():
         return
 
     if args.check_writes:
-        diag = _gather_write_diagnostics(str(Path.cwd()), PermissionError("write-check"))
+        diag = _gather_write_diagnostics(str(Path.cwd()), None)
         log_print("Write diagnostics:\n" + diag, verbose=True, quiet=False)
         return
 

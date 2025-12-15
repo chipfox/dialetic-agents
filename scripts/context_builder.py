@@ -70,7 +70,7 @@ def _ensure_writable(path: str) -> None:
         pass
 
 
-def _gather_write_diagnostics(path: str, exc: Exception) -> str:
+def _gather_write_diagnostics(path: str, exc: Exception | None) -> str:
     """Return a short diagnostic string with context when a write fails."""
     out = []
     try:
@@ -101,7 +101,7 @@ def _gather_write_diagnostics(path: str, exc: Exception) -> str:
     except Exception as e:
         out.append(f"Diagnostics error: {e}")
     # Add hint from known Windows Controlled Folder Access
-    if isinstance(exc, PermissionError) or "Permission" in str(exc):
+    if exc is not None and (isinstance(exc, PermissionError) or "Permission" in str(exc)):
         out.append(
             "Hint: On Windows this may be Controlled Folder Access (Windows Security > Ransomware protection)."
         )
