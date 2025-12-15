@@ -909,13 +909,18 @@ def run_architect_phase(
         "Do not wrap it in JSON."
     )
 
+    architect_max_tokens = 8000
+    if "haiku" in architect_model.lower():
+        architect_max_tokens = 4000
+    
     response = get_llm_response(
         architect_prompt,
         architect_input,
         model=architect_model,
         run_log=run_log,
         turn_number=0,
-        agent="architect"
+        agent="architect",
+        max_tokens=architect_max_tokens
     )
     
     if response:
@@ -1614,14 +1619,27 @@ def main():
                         f"\n{current_files}"
                     )
 
-            # Player
+# Player - adjust max_tokens based on model capabilities
+            player_max_tokens = 8000
+            if "haiku" in args.player_model.lower():
+                player_max_tokens = 4000  # Haiku has 4096 output limit
+                player_input += (
+                    "\n\n⚠️  OUTPUT TOKEN LIMIT WARNING:\n"
+                    "Your model (Haiku) has a ~4000 token output limit.\n"
+                    "- Prioritize SMALL, FOCUSED edits (1-3 files max per turn).\n"
+                    "- If editing large files, include ONLY the changed portions with context.\n"
+                    "- For multi-file changes, split across turns to avoid truncation.\n"
+                    "- Keep thought_process to ONE sentence (no explanations).\n"
+                )
+            
             player_response = get_llm_response(
                 player_prompt,
                 player_input,
-                model=args.player_model, 
+                model=args.player_model,
                 run_log=run_log,
                 turn_number=turn,
-                agent="player"
+                agent="player",
+                max_tokens=player_max_tokens
             )
             
             if not player_response:
@@ -1684,6 +1702,7 @@ def main():
                     run_log=run_log,
                     turn_number=turn,
                     agent="player",
+                    max_tokens=player_max_tokens
                 )
                 if repair_response:
                     player_data = extract_json(
@@ -2347,14 +2366,19 @@ def main():
                 f"\n{current_files_new}"
             )
 
-            # Coach
+            # Coach - use higher token limit for detailed feedback
+            coach_max_tokens = 8000
+            if "haiku" in args.coach_model.lower():
+                coach_max_tokens = 4000
+            
             coach_response = get_llm_response(
                 coach_prompt,
                 coach_input,
                 model=args.coach_model,
                 run_log=run_log,
                 turn_number=turn,
-                agent="coach"
+                agent="coach",
+                max_tokens=coach_max_tokens
             )
             
             if not coach_response:
@@ -2392,6 +2416,7 @@ def main():
                     run_log=run_log,
                     turn_number=turn,
                     agent="coach",
+                    max_tokens=coach_max_tokens
                 )
                 if repair_response:
                     coach_data = extract_json(
