@@ -98,6 +98,8 @@ You must output your work in this exact JSON format (wrapped in a code block):
 - Return exactly one fenced JSON block, nothing else. No prose, headings, or commentary before or after.
 - **NO COMMENTS**: Do not include `//` comments inside the JSON. Standard JSON does not support them.
 - **ESCAPE NEWLINES**: If a file content string has newlines, they must be escaped `\n`.
+- **TOKEN EFFICIENCY**: Keep `thought_process` to ONE sentence (no explanations or justifications).
+- **FOCUSED OUTPUT**: If using Haiku or small model, limit to 2-3 files max to avoid truncation.
 - If you cannot complete the task, still emit valid JSON with an "error" note in `thought_process` and empty `files`/`commands_to_run`.
 
 ### Critical Implementation Rules
@@ -106,6 +108,7 @@ You must output your work in this exact JSON format (wrapped in a code block):
 - Avoid multi-line strings in JSON fields. If you need to communicate multi-line info, put it in file contents or command output.
 - Always run verification commands relevant to the repo (build/lint/tests). If a Node/Next.js repo, include `npm run lint` and `npm run build`.
 - When a pattern error appears (e.g., the same TypeScript property/type issue), **search and fix all occurrences in one turn**. Do not stop after the first file.
+- **Model-aware output**: If your output approaches 3500 tokens, stop and emit what you have. The orchestrator will decompose remaining work for the next turn.
 
 ### Turn-by-turn behavior (Required)
 

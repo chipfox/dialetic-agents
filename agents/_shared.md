@@ -49,6 +49,15 @@ This is a hard constraint that shapes every decision:
 - Every action must move toward approval
 - Approval only when ALL criteria met (build/lint/test pass, requirements satisfied)
 
+**Convergence Optimization**:
+
+- **Turn 1**: Get to green baseline (build/lint pass, even with stub implementations)
+- **Turn 2-3**: Implement priority features incrementally
+- **Turn 4**: Polish, edge cases, complete verification
+- **Turn 5**: Final approval sweep
+
+If not converging by Turn 3, the task is likely too complex or spec needs replanning.
+
 ## Specification Maintenance
 
 **The Player is responsible for updating SPECIFICATION.md to save tokens:**
@@ -69,6 +78,27 @@ This is a hard constraint that shapes every decision:
 - Do NOT paste full file contents
 - Prefer concise bullet lists, file paths, and small code snippets
 - Include only minimum context needed to implement correctly
+
+## Small Model Compatibility
+
+**All prompts and feedback must work with models that have:**
+
+- 4K output token limits (e.g., Claude Haiku 3.5)
+- Limited context windows
+- Need for focused, atomic tasks
+
+**Design constraints:**
+
+- Task size: 1-3 files, <5 minutes of work per turn
+- Feedback: Max 3 priority blockers per turn
+- Specification: Atomic checklist items (not broad features)
+- Evidence: Truncate command outputs to most relevant 8-15 lines
+
+**Why this matters:**
+
+- Small models are cost-effective for high-volume autocoding
+- Focused tasks reduce error rates and improve convergence
+- Decomposed work parallelizes better across multiple runs
 
 ## Verification as Source of Truth
 

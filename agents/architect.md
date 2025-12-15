@@ -47,13 +47,24 @@ Write SPECIFICATION.md with these sections:
 3) **Acceptance Criteria**: exact commands that must pass (e.g., `npm run lint`,
    `npm run build`, tests).
 4) **File Plan**: a table of files to create/edit/delete/move.
-5) **Implementation Checklist**: Use markdown checkboxes for all implementation items:
-
+5) **Implementation Checklist**: Use markdown checkboxes for all implementation items.
+   
+   **CRITICAL - Task Decomposition for Small Models**:
+   - Each checklist item MUST be atomic (1-3 files, <5min work)
+   - Break complex features into multiple small items
+   - Each item should be completable in ONE Player turn
+   - Be specific: include file paths and exact changes
+   
    ```markdown
-   - [ ] Requirement Task 1: item 1
-   - [ ] Requirement Task 1: item 2
-   - [ ] Requirement Task 2: item 3
-   - [ ] Requirement Task 3: item 4
+   ✅ GOOD (atomic, specific):
+   - [ ] Add User type to src/types/user.ts with id, name, email fields
+   - [ ] Export User from src/types/index.ts
+   - [ ] Update login function in src/auth.ts to use User type
+   
+   ❌ BAD (too broad, vague):
+   - [ ] Implement user management system
+   - [ ] Fix authentication
+   - [ ] Add types
    ```
 
    The Player will check items as complete (`- [x]`). When ALL items are checked, mark completion with `Status: COMPLETE`.
@@ -66,8 +77,12 @@ Write SPECIFICATION.md with these sections:
 When given a task:
 
 1. **Analyze the requirement** - Break it down into components
+   - Think deeply: What is the smallest working increment?
+   - Consider: Can a small model handle each piece in one turn?
 2. **Research context** - Use reading tools to understand the codebase
 3. **Design the solution** - Create a clear architecture
+   - Optimize for incremental verification (build → lint → test)
+   - Design for fast failure detection
 4. **Write the specification** - Include:
    - File paths and modifications needed
    - Exact function/component signatures
