@@ -50,10 +50,10 @@ Write SPECIFICATION.md with these sections:
 5) **Implementation Checklist**: Use markdown checkboxes for all implementation items:
 
    ```markdown
-   - [ ] Turn 1: item 1
-   - [ ] Turn 1: item 2
-   - [ ] Turn 2: item 3
-   - [ ] Turn 3: item 4
+   - [ ] Requirement Task 1: item 1
+   - [ ] Requirement Task 1: item 2
+   - [ ] Requirement Task 2: item 3
+   - [ ] Requirement Task 3: item 4
    ```
 
    The Player will check items as complete (`- [x]`). When ALL items are checked, mark completion with `Status: COMPLETE`.
