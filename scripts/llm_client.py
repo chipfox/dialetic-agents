@@ -40,7 +40,8 @@ def get_llm_response(
     model="claude-sonnet-4.5",
     run_log=None,
     turn_number=0,
-    agent="unknown"
+    agent="unknown",
+    max_tokens=8000
 ):
     """Call Copilot with observability logging."""
     token = os.environ.get("GITHUB_TOKEN") or get_github_token()
@@ -81,6 +82,8 @@ def get_llm_response(
         "copilot",
         "--model",
         model,
+        "--max-tokens",
+        str(max_tokens),
         "--allow-all-paths",
         "--silent",
         "-p",

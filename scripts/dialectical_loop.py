@@ -312,20 +312,26 @@ def _spec_for_model(spec_text: str, spec_prog: dict, turn: int, max_chars: int =
     return truncate_output(text, max_chars=max_chars)
 
 def save_file(path, content, *, run_log=None, verbose=False, quiet=False, turn_number=0):
-    dirname = os.path.dirname(path)
+    # Convert to absolute path to avoid CWD ambiguity
+    abs_path = os.path.abspath(path)
+    dirname = os.path.dirname(abs_path)
+    
+    if verbose and not quiet:
+        log_print(f"[Write] Resolving path='{path}' -> '{abs_path}' (cwd='{os.getcwd()}')", verbose=True, quiet=quiet)
+    
     if dirname:
         os.makedirs(dirname, exist_ok=True)
     
     # Ensure target is writable if it exists
-    if os.path.exists(path):
-        _ensure_writable(path)
+    if os.path.exists(abs_path):
+        _ensure_writable(abs_path)
 
     # Use atomic write: write to a temp file in the same dir then replace
     # Note: mkstemp creates file with 0o600 permissions by default
     fd, tmp_path = tempfile.mkstemp(dir=dirname or None)
 
     def _log_write(op, outcome, error=None, diag=None, diag_perm=False):
-        msg = f"[Write] op={op} path={path} outcome={outcome}"
+        msg = f"[Write] op={op} path={abs_path} outcome={outcome}"
         if error:
             msg += f" err={error.__class__.__name__}: {error}"
         if diag_perm:
@@ -342,7 +348,8 @@ def save_file(path, content, *, run_log=None, verbose=False, quiet=False, turn_n
                 action="file_write",
                 result=outcome,
                 details={
-                    "path": path,
+                    "path": abs_path,
+                    "relative_path": path,
                     "operation": op,
                     "diag_permission": diag_perm,
                     "error_class": error.__class__.__name__ if error else None,
@@ -358,7 +365,7 @@ def save_file(path, content, *, run_log=None, verbose=False, quiet=False, turn_n
                 run_log,
                 "first_permission_error",
                 {
-                    "path": path,
+                    "path": abs_path,
                     "operation": op,
                     "error_class": error.__class__.__name__,
                     "error_message": str(error),
@@ -368,7 +375,7 @@ def save_file(path, content, *, run_log=None, verbose=False, quiet=False, turn_n
                 },
             )
             log_print(
-                f"[Warning] First PermissionError captured op={op} path={path}: {error}",
+                f"[Warning] First PermissionError captured op={op} path={abs_path}: {error}",
                 verbose=True,
                 quiet=quiet,
             )
@@ -386,34 +393,34 @@ def save_file(path, content, *, run_log=None, verbose=False, quiet=False, turn_n
             if delay_s:
                 time.sleep(delay_s)
             try:
-                if os.path.exists(path):
+                if os.path.exists(abs_path):
                     try:
-                        os.replace(tmp_path, path)
+                        os.replace(tmp_path, abs_path)
                         _log_write("replace", "success")
                     except PermissionError as e:
                         # Fallback: try to remove target first (sometimes helps on Windows)
-                        _ensure_writable(path)
+                        _ensure_writable(abs_path)
                         try:
-                            os.remove(path)
+                            os.remove(abs_path)
                             _log_write("remove_target", "success")
                         except FileNotFoundError:
                             _log_write("remove_target", "skipped_missing")
                         try:
-                            os.replace(tmp_path, path)
+                            os.replace(tmp_path, abs_path)
                             _log_write("replace_after_remove", "success")
                         except PermissionError as e_inner:
-                            diag, diag_perm = _gather_write_diagnostics(path, e_inner)
+                            diag, diag_perm = _gather_write_diagnostics(abs_path, e_inner)
                             _log_write("replace_after_remove", "error", error=e_inner, diag=diag, diag_perm=diag_perm)
                             _record_first_permission(e_inner, "replace_after_remove", diag, diag_perm)
                             last_exc = e_inner
                             continue
                 else:
-                    os.replace(tmp_path, path)
+                    os.replace(tmp_path, abs_path)
                     _log_write("replace", "success_new")
                 last_exc = None
                 break
             except PermissionError as e:
-                diag, diag_perm = _gather_write_diagnostics(path, e)
+                diag, diag_perm = _gather_write_diagnostics(abs_path, e)
                 _log_write("replace", "error", error=e, diag=diag, diag_perm=diag_perm)
                 _record_first_permission(e, "replace", diag, diag_perm)
                 last_exc = e
@@ -432,13 +439,14 @@ def save_file(path, content, *, run_log=None, verbose=False, quiet=False, turn_n
 
 def safe_save_file(path, content, *, run_log=None, verbose=False, quiet=False, turn_number=0):
     """Write a file and return (ok, error_message)."""
+    abs_path = os.path.abspath(path)
     try:
         save_file(path, content, run_log=run_log, verbose=verbose, quiet=quiet, turn_number=turn_number)
         return True, ""
     except Exception as e:
         # Gather additional diagnostics to help pinpoint permission problems
         try:
-            diag, diag_perm = _gather_write_diagnostics(path, e)
+            diag, diag_perm = _gather_write_diagnostics(abs_path, e)
         except Exception:
             diag, diag_perm = f"Underlying error: {e}", False
         if run_log:
@@ -450,7 +458,8 @@ def safe_save_file(path, content, *, run_log=None, verbose=False, quiet=False, t
                 action="file_write",
                 result="error",
                 details={
-                    "path": path,
+                    "path": abs_path,
+                    "relative_path": path,
                     "operation": "save_file",
                     "diag_permission": diag_perm,
                     "error_class": e.__class__.__name__,
@@ -458,7 +467,7 @@ def safe_save_file(path, content, *, run_log=None, verbose=False, quiet=False, t
                 },
                 error=str(e),
             )
-        return False, f"save_file failed for '{path}': {e}\n{diag}"
+        return False, f"save_file failed for '{abs_path}': {e}\n{diag}"
 
 
 def _basic_balance_check_js_ts(text: str):
